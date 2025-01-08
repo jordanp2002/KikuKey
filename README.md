@@ -2,15 +2,6 @@
 
 Hi! Welcome to KikuKey, a new Japanese Immersion platform to held guide you through Immersion and bring all the existing tools into easy to find place! KikuKey provides it users with all the guides and tools they need to begin learning Japanese through Immersion. Immersion has become a very popular language learning method in recent years and there is many tools to enhance your immersion experience. As someone learning Japanese, I found the amount of tools out there for learning very overwhelming so I decided to build KikuKey which brings all these tools to one easy to access place! So if your just beginning Japanese or immediate to advanced there is a place for you on KikuKey! Our automated immersion time trackers, video player and Epub/HTML reader make it easy to have all your immersion tools in one place! Enjoy!
 
-# Image Walkthrough
-
-
-
-
-
-
-
-
 # Features
 
 
@@ -35,3 +26,31 @@ To help the users just beginning, the hiragana and katakana quizzes alongside th
 
 KikuKey features automated immersion tracking time. This means anytime your watching or reader the time you've spent is being logged for you to see on your dashboard to view your progress! On the dashboard you can see different views for your daily, weekly , monthly and yearly immersion session and total hours, you can also set goals for those time periods and they will be automatically tracked! This helps users see the progress they are making and how much time they spent learning!
 
+# Images
+
+## Home 
+![Home](images/Home.png)
+
+## Dashboard
+![Dashboard](images/Dashboard.png)
+
+## Video Player
+![Video](images/Video.png)
+
+## Epub/Manga Reader
+![Library](images/Library.png)
+![Manga](images/Manga.png)
+![Yomi](images/YomiManga.png)
+![Fullscreen](images/FullScreenManga.png)
+![Epub](images/Epub.png)
+
+## Quizzes and Charts For Hiragana and Katakana
+
+![quizhome](images/QuizHome.png)
+![typingQ](images/TypingQ.png)
+![CharQ](images/CharQ.png)
+![Chart](images/Chart.png)
+
+# Goals (now on dashboard)
+
+![Goals](images/Goals.png)
