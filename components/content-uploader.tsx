@@ -239,15 +239,15 @@ export function ContentUploader({ onUploadComplete, openDB }: ContentUploaderPro
       toast.success('EPUB added to library');
       onUploadComplete();
     } catch (error) {
-      // Clean up cover URL if it exists
-      if (coverUrl) {
-        URL.revokeObjectURL(coverUrl);
-      }
       console.error('Error processing EPUB:', error);
       if (error instanceof Error) {
         toast.error(`Failed to process EPUB: ${error.message}`);
       } else {
         toast.error('Failed to process EPUB');
+      }
+      // Only revoke the cover URL if there was an error
+      if (coverUrl) {
+        URL.revokeObjectURL(coverUrl);
       }
     } finally {
       setIsUploading(false);

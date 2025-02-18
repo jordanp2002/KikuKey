@@ -8,6 +8,9 @@ import { BackButton } from '@/components/ui/back-button';
 import { ContentUploader } from '@/components/content-uploader';
 import { LibraryGrid } from '@/components/library-grid';
 import { ReaderGuide } from '@/components/reader-guide';
+import ePub from 'epubjs';
+import { formatBytes } from '@/lib/utils';
+import { Sidebar } from "@/components/sidebar";
 
 interface MangaEntry {
   id: string;
@@ -33,6 +36,7 @@ interface MangaEntry {
   lastRead: number;
   dateAdded: number;
   progress: number;
+  isLoadingCover?: boolean;
 }
 const DB_NAME = 'MangaLibraryDB';
 let DB_VERSION = 2;
@@ -52,6 +56,8 @@ export default function ReaderPage() {
   const [library, setLibrary] = useState<MangaEntry[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<MangaEntry | null>(null);
   const [hideGuide, setHideGuide] = useState(false);
+  const [storageUsage, setStorageUsage] = useState<string>('Calculating...');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const handleProgressUpdate = useCallback((progress: number) => {
     if (selectedEntry) {
       setLibrary(prevLibrary => 
@@ -72,6 +78,7 @@ export default function ReaderPage() {
       const request = store.getAll();
 
       request.onsuccess = () => {
+        // Clean up existing object URLs
         library.forEach(entry => {
           if (entry.coverImage) {
             URL.revokeObjectURL(entry.coverImage);
@@ -84,9 +91,41 @@ export default function ReaderPage() {
             });
           }
         });
+
         const loadedEntries = request.result.map((entry: MangaEntry) => {
+          // Set initial loading state
+          entry.isLoadingCover = true;
+
           if (entry.type === 'manga' && entry.images && entry.images.length > 0) {
             entry.coverImage = URL.createObjectURL(entry.images[0]);
+            entry.isLoadingCover = false;
+          } else if (entry.type === 'epub' && entry.epubFile instanceof File) {
+            // Create a new cover URL for EPUB files
+            const createEpubCover = async () => {
+              try {
+                const tempBook = ePub(await entry.epubFile!.arrayBuffer());
+                const coverImage = await tempBook.loaded.cover;
+                if (coverImage) {
+                  const tempRendition = tempBook.renderTo(document.createElement('div'));
+                  // @ts-ignore
+                  const coverHref = await tempRendition.book.coverUrl();
+                  if (coverHref) {
+                    const response = await fetch(coverHref);
+                    const blob = await response.blob();
+                    entry.coverImage = URL.createObjectURL(blob);
+                    // @ts-ignore
+                    tempRendition.destroy();
+                  }
+                }
+              } catch (error) {
+                console.warn('Failed to load EPUB cover:', error);
+              } finally {
+                entry.isLoadingCover = false;
+                // Force a re-render to show the new cover and hide loading state
+                setLibrary(prev => [...prev]);
+              }
+            };
+            createEpubCover();
           }
           return entry;
         });
@@ -125,12 +164,46 @@ export default function ReaderPage() {
     }
   }, [loadLibrary]);
 
+  const calculateStorageUsage = useCallback(async () => {
+    try {
+      const db = await openDB();
+      const transaction = db.transaction(['manga'], 'readonly');
+      const store = transaction.objectStore('manga');
+      const request = store.getAll();
+
+      request.onsuccess = () => {
+        let totalSize = 0;
+        request.result.forEach((entry: MangaEntry) => {
+          // Calculate size of manga images
+          if (entry.type === 'manga' && entry.images) {
+            entry.images.forEach(image => {
+              totalSize += (image as File).size;
+            });
+          }
+          // Calculate size of epub files
+          if (entry.type === 'epub' && entry.epubFile) {
+            totalSize += entry.epubFile.size;
+          }
+          // Calculate size of mokuro data
+          if (entry.mokuroData) {
+            totalSize += new Blob([JSON.stringify(entry.mokuroData)]).size;
+          }
+        });
+        setStorageUsage(formatBytes(totalSize));
+      };
+    } catch (error) {
+      console.error('Error calculating storage usage:', error);
+      setStorageUsage('Error calculating size');
+    }
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       try {
         DB_VERSION = await getCurrentDBVersion();
         await initializeDB();
         await loadLibrary();
+        await calculateStorageUsage();
       } catch (error) {
         console.error('Failed to initialize:', error);
         toast.error('Failed to initialize manga library');
@@ -228,7 +301,8 @@ export default function ReaderPage() {
     
     try {
       const mangaToDelete = library.find(manga => manga.id === id);
-      if (mangaToDelete?.type === 'manga') {
+      if (!mangaToDelete) return;
+      if (mangaToDelete.type === 'manga') {
         if (mangaToDelete.coverImage) {
           URL.revokeObjectURL(mangaToDelete.coverImage);
         }
@@ -239,11 +313,21 @@ export default function ReaderPage() {
             }
           });
         }
+        window.localStorage.removeItem(`manga-progress-${id}`);
+      } else if (mangaToDelete.type === 'epub' && mangaToDelete.epubFile) {
+        // Clean up epub progress in localStorage
+        window.localStorage.removeItem(`epub-progress-${mangaToDelete.epubFile.name}`);
+        window.localStorage.removeItem(`epub-progress-percent-${mangaToDelete.epubFile.name}`);
       }
+      window.localStorage.removeItem('pendingMangaLog');
+
+      // Delete from IndexedDB
       const db = await openDB();
       const transaction = db.transaction(['manga'], 'readwrite');
       const store = transaction.objectStore('manga');
       await store.delete(id);
+
+      // Update state
       setLibrary(prevLibrary => prevLibrary.filter(manga => manga.id !== id));
       if (selectedEntry?.id === id) {
         setSelectedEntry(null);
@@ -275,55 +359,62 @@ export default function ReaderPage() {
   }, [library]);
 
   return (
-    <div className="flex-1 w-full flex flex-col gap-4 max-w-7xl mx-auto p-4">
-      <BackButton />
-      
-      <div className="flex flex-col items-center gap-1">
-        <h1 className="text-4xl font-bold tracking-tight">Reader</h1>
-        <div className="h-1 w-12 rounded-full bg-[#F87171]" />
-      </div>
-      
-      <div className="space-y-4">
-        {/* Guide Section */}
-        <ReaderGuide onHideGuide={setHideGuide} />
-
-        {/* Library Section */}
-        <section>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-muted-foreground">Your Library</h2>
-            <ContentUploader onUploadComplete={loadLibrary} openDB={openDB} />
+    <div className="flex min-h-screen">
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen(!isSidebarOpen)} />
+      <div className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-0'}`}>
+        <div className="flex-1 w-full flex flex-col gap-4 max-w-7xl mx-auto p-4">
+          <div className="flex flex-col items-center gap-1">
+            <h1 className="text-4xl font-bold tracking-tight">Reader</h1>
+            <div className="h-1 w-12 rounded-full bg-[#F87171]" />
           </div>
-          <LibraryGrid 
-            entries={library}
-            onEntrySelect={setSelectedEntry}
-            onEntryDelete={handleDeleteManga}
-          />
-        </section>
-      </div>
+          
+          <div className="space-y-4">
+            {/* Guide Section */}
+            <ReaderGuide onHideGuide={setHideGuide} />
 
-      {selectedEntry && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-background rounded-xl w-full max-w-6xl h-[90vh] border-2 border-[#F87171]">
-            {selectedEntry.type === 'manga' && selectedEntry.mokuroData && selectedEntry.images ? (
-              <MangaViewer
-                mokuroData={selectedEntry.mokuroData}
-                images={selectedEntry.images}
-                onClose={handleClose}
-                entryId={selectedEntry.id}
-                onProgressUpdate={handleProgressUpdate}
+            {/* Library Section */}
+            <section>
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-4">
+                  <h2 className="text-xl font-semibold text-muted-foreground">Your Library</h2>
+                  <span className="text-sm text-muted-foreground">Storage used: {storageUsage}</span>
+                </div>
+                <ContentUploader onUploadComplete={async () => {
+                  await loadLibrary();
+                  await calculateStorageUsage();
+                }} openDB={openDB} />
+              </div>
+              <LibraryGrid 
+                entries={library}
+                onEntrySelect={setSelectedEntry}
+                onEntryDelete={handleDeleteManga}
               />
-            ) : selectedEntry.type === 'epub' && selectedEntry.epubFile ? (
-              <EpubViewer
-                file={selectedEntry.epubFile}
-                onClose={handleClose}
-                openDB={openDB}
-                entryId={selectedEntry.id}
-                onProgressUpdate={handleProgressUpdate}
-              />
-            ) : null}
+            </section>
           </div>
+
+          {selectedEntry && (
+            <>
+              {selectedEntry.type === 'manga' && selectedEntry.mokuroData && selectedEntry.images ? (
+                <MangaViewer
+                  mokuroData={selectedEntry.mokuroData}
+                  images={selectedEntry.images}
+                  onClose={handleClose}
+                  entryId={selectedEntry.id}
+                  onProgressUpdate={handleProgressUpdate}
+                />
+              ) : selectedEntry.type === 'epub' && selectedEntry.epubFile ? (
+                <EpubViewer
+                  file={selectedEntry.epubFile}
+                  onClose={handleClose}
+                  openDB={openDB}
+                  entryId={selectedEntry.id}
+                  onProgressUpdate={handleProgressUpdate}
+                />
+              ) : null}
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

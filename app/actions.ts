@@ -5,6 +5,52 @@ import { createClient } from "@/utils/supabase/server";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+// Helper function to handle user display name update
+const updateUserDisplayName = async (supabase: any, user: any) => {
+  if (user.app_metadata.provider === 'google') {
+    // Get display name from Google identity data
+    const displayName = user.identities?.[0]?.identity_data?.full_name || 
+                      user.identities?.[0]?.identity_data?.name ||
+                      user.identities?.[0]?.identity_data?.email?.split('@')[0];
+                      
+    if (displayName) {
+      await supabase.auth.updateUser({
+        data: {
+          display_name: displayName
+        }
+      });
+    }
+  }
+};
+
+// Auth callback handler
+export const handleAuthCallback = async (request: Request) => {
+  const requestUrl = new URL(request.url);
+  const code = requestUrl.searchParams.get("code");
+  const origin = requestUrl.origin;
+  const redirectTo = requestUrl.searchParams.get("redirect_to")?.toString();
+
+  if (code) {
+    const supabase = await createClient();
+    const { data: { session }, error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (!error && session) {
+      await updateUserDisplayName(supabase, session.user);
+    }
+
+    if (error) {
+      return redirect(`${origin}/sign-in?error=true&message=${encodeURIComponent(error.message)}`);
+    }
+  }
+
+  if (redirectTo) {
+    return redirect(`${origin}${redirectTo}`);
+  }
+
+  return redirect(`${origin}/protected`);
+};
+
+// Email/Password Sign Up
 export const signUpAction = async (formData: FormData) => {
   const email = formData.get("email")?.toString();
   const password = formData.get("password")?.toString();
@@ -20,7 +66,7 @@ export const signUpAction = async (formData: FormData) => {
     );
   }
 
-  const { data,error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -32,6 +78,7 @@ export const signUpAction = async (formData: FormData) => {
   });
 
   if (error) {
+    console.error('Signup error:', error);
     return encodedRedirect("error", "/sign-up", error.message);
   } else if (data.user?.identities?.length === 0) {
     return encodedRedirect("error", "/sign-up", "Email already exists");
@@ -44,6 +91,7 @@ export const signUpAction = async (formData: FormData) => {
   }
 };
 
+// Email/Password Sign In
 export const signInAction = async (formData: FormData) => {
   const email = formData.get("email") as string;
   const password = formData.get("password") as string;
@@ -140,6 +188,13 @@ export const signOutAction = async () => {
 
 export const insertVideoLog = async (startTime: string, endTime: string) => {
   const supabase = await createClient();
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  const durationMinutes = (end.getTime() - start.getTime()) / (1000 * 60);
+ 
+  if (durationMinutes < 5) {
+    return;
+  }
 
   const { data: { user }, error: userError } = await supabase.auth.getUser();
 
@@ -170,6 +225,16 @@ export const insertVideoLog = async (startTime: string, endTime: string) => {
 export const insertMangaLog = async (startTime: string, endTime: string) => {
   const supabase = await createClient();
 
+  // Calculate duration in minutes
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  const durationMinutes = (end.getTime() - start.getTime()) / (1000 * 60);
+  if (durationMinutes < 5) {
+    return;
+  }
+
+  // Check if duration is less than 5 minutes
+ 
   const { data: { user }, error: userError } = await supabase.auth.getUser();
 
   if (userError || !user) {
@@ -260,4 +325,166 @@ export const insertGoal = async (
 
     return { data };
   }
+};
+
+export type LeaderboardPeriod = 'daily' | 'monthly' | 'yearly' | 'all-time';
+export type LeaderboardType = 'total' | 'listening' | 'reading';
+
+export interface LeaderboardEntry {
+  username: string;
+  user_id: string;
+  total_reading?: number;
+  total_listening?: number;
+  total_immersion: number;
+}
+
+interface UserProgressLog {
+  user_id: string;
+  reading_minutes: number;
+  listening_minutes: number;
+  total_minutes: number;
+  date: string;
+  auth_users: {
+    profiles: {
+      username: string;
+    }[];
+  };
+}
+
+interface UserProgress {
+  user_id: string;
+  total_reading_minutes: number;
+  total_listening_minutes: number;
+  total_minutes: number;
+  auth_users: {
+    profiles: {
+      username: string;
+    }[];
+  };
+}
+
+export const getLeaderboard = async (
+  period: LeaderboardPeriod,
+  type: LeaderboardType
+): Promise<{ data: LeaderboardEntry[] | null; error: any }> => {
+  const supabase = await createClient();
+  console.log('Fetching leaderboard for period:', period, 'type:', type);
+
+  if (period === 'all-time') {
+    const { data, error } = await supabase
+      .from('UserProgress')
+      .select(`
+        id,
+        user_id,
+        total_reading_minutes,
+        total_listening_minutes,
+        total_minutes,
+        profiles!inner (
+          username
+        )
+      `) 
+      .order('total_minutes', { ascending: false })
+      .limit(10);
+
+    console.log('All-time query result:', { data, error });
+
+    if (error) return { data: null, error };
+
+    const typedData = data as any[];
+    const mappedData = typedData.map(entry => ({
+      username: entry.profiles ? entry.profiles.username : 'Unknown User',
+      user_id: entry.profiles?.id || entry.user_id,
+      total_reading: entry.total_reading_minutes || 0,
+      total_listening: entry.total_listening_minutes || 0,
+      total_immersion: entry.total_minutes || 0
+    }));
+
+    console.log('All-time mapped data:', mappedData);
+
+    return {
+      data: mappedData,
+      error: null
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let dateFilter;
+
+  if (period === 'daily') {
+    dateFilter = today.toISOString().split('T')[0];
+    console.log('Filtering for date:', dateFilter);
+  } else if (period === 'monthly') {
+    dateFilter = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+    console.log('Filtering from date:', dateFilter);
+  } else if (period === 'yearly') {
+    dateFilter = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
+    console.log('Filtering from date:', dateFilter);
+  }
+
+  const query = supabase
+    .from('UserProgressLogs')
+    .select(`
+      *,
+      profiles (
+        id,
+        username
+      )
+    `)
+    .order('total_minutes', { ascending: false });
+
+  if (period === 'daily') {
+    query.eq('date', dateFilter);
+  } else {
+    query.gte('date', dateFilter);
+  }
+
+  const { data, error } = await query;
+  console.log('Query result:', { data, error });
+
+  if (error) return { data: null, error };
+
+  const typedData = data as any[];
+  
+  // Group and aggregate the results by profile_id
+  const aggregatedData = typedData.reduce((acc: { [key: string]: LeaderboardEntry }, curr) => {
+    const profileId = curr.profiles?.id || curr.user_id;
+    if (!acc[profileId]) {
+      acc[profileId] = {
+        username: curr.profiles ? curr.profiles.username : 'Unknown User',
+        user_id: profileId,
+        total_reading: 0,
+        total_listening: 0,
+        total_immersion: 0
+      };
+    }
+
+    acc[profileId].total_reading! += curr.reading_minutes || 0;
+    acc[profileId].total_listening! += curr.listening_minutes || 0;
+    acc[profileId].total_immersion += curr.total_minutes || 0;
+
+    return acc;
+  }, {});
+
+  console.log('Aggregated data:', aggregatedData);
+
+  // Sort by the selected type and take top 10
+  const sortedData = Object.values(aggregatedData)
+    .sort((a, b) => {
+      const aValue = type === 'reading' ? a.total_reading! :
+                    type === 'listening' ? a.total_listening! :
+                    a.total_immersion;
+      const bValue = type === 'reading' ? b.total_reading! :
+                    type === 'listening' ? b.total_listening! :
+                    b.total_immersion;
+      return bValue - aValue;
+    })
+    .slice(0, 10);
+
+  console.log('Final sorted data:', sortedData);
+
+  return {
+    data: sortedData,
+    error: null
+  };
 };

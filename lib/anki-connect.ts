@@ -36,6 +36,14 @@ export interface AnkiNoteData {
   }[];
 }
 
+export interface AnkiNoteInfo {
+  noteId: number;
+  modelName: string;
+  fields: Record<string, { value: string; order: number }>;
+  tags: string[];
+  cards: number[];
+}
+
 const defaultConfig: AnkiConnectConfig = {
   url: 'http://127.0.0.1:8765',
   version: 6,
@@ -56,32 +64,44 @@ export class AnkiConnect {
   }
 
   private async invoke<T>(action: string, params: Record<string, any> = {}): Promise<T> {
-    const response = await fetch(this.config.url, {
-      method: 'POST',
-      mode: 'cors',
-      cache: 'no-cache',
-      credentials: 'omit',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        action,
-        version: 6,
-        params
-      })
-    });
+    try {
+      const response = await fetch(this.config.url, {
+        method: 'POST',
+        mode: 'cors',
+        cache: 'no-cache',
+        credentials: 'omit',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action,
+          version: 6,
+          params
+        })
+      });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        throw new AnkiConnectError(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.error) {
+        throw new AnkiConnectError(`AnkiConnect error: ${result.error}`);
+      }
+
+      return result.result;
+    } catch (error) {
+      if (error instanceof TypeError && error.message === 'Failed to fetch') {
+        throw new AnkiConnectError(
+          'Could not connect to Anki. Please ensure:\n' +
+          '1. Anki is running\n' +
+          '2. AnkiConnect add-on is installed (ID: 2055492159)\n' +
+          '3. You\'ve restarted Anki after installing the add-on'
+        );
+      }
+      throw error;
     }
-
-    const result = await response.json();
-    
-    if (result.error) {
-      throw new Error(`AnkiConnect error: ${result.error}`);
-    }
-
-    return result.result;
   }
 
   async testConnection(): Promise<boolean> {
@@ -187,8 +207,43 @@ export class AnkiConnect {
       }
     }
   }
+
+  async findNotes(query: string): Promise<number[]> {
+    return this.invoke<number[]>('findNotes', { query });
+  }
+
+  async notesInfo(noteIds: number[]): Promise<AnkiNoteInfo[]> {
+    return this.invoke<AnkiNoteInfo[]>('notesInfo', { notes: noteIds });
+  }
+
+  async updateNoteFields(noteId: number, fields: Record<string, string>): Promise<void> {
+    return this.invoke<void>('updateNoteFields', {
+      note: {
+        id: noteId,
+        fields
+      }
+    });
+  }
+
+  async findMostRecentNote(deckName: string): Promise<AnkiNoteInfo | null> {
+    try {
+      const noteIds = await this.findNotes(`deck:"${deckName}" added:365`);
+      
+      if (noteIds.length === 0) {
+        return null;
+      }
+
+      const sortedNoteIds = noteIds.sort((a, b) => b - a);
+      const notesInfo = await this.notesInfo([sortedNoteIds[0]]);
+      return notesInfo[0] || null;
+    } catch (error) {
+      console.error('Failed to find most recent note:', error);
+      throw error;
+    }
+  }
 }
 
 export const createAnkiConnect = (config?: Partial<AnkiConnectConfig>): AnkiConnect => {
   return new AnkiConnect(config);
 }; 
+

@@ -9,6 +9,7 @@ export interface KeyBindings {
   seekNextSubtitle: string;
   seekPreviousSubtitle: string;
   toggleAutoPause: string;
+  toggleTranscript: string;
 }
 
 interface PlayerSettings {
@@ -28,6 +29,7 @@ export const defaultSettings: PlayerSettings = {
     seekNextSubtitle: 'ArrowRight',
     seekPreviousSubtitle: 'ArrowLeft',
     toggleAutoPause: 'p',
+    toggleTranscript: 't',
   },
   autoPause: {
     enabled: false,

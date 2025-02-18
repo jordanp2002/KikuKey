@@ -7,7 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import ePub, { Book, Rendition, Contents } from 'epubjs';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, Loader2 } from 'lucide-react';
 import { insertMangaLog } from '@/app/actions';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
@@ -50,41 +50,70 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
 
   const [isNavigating, setIsNavigating] = useState(false);
 
-  // Start immersion timer immediately
+  const [isLoading, setIsLoading] = useState(true);
+
+  const [isClosing, setIsClosing] = useState(false);
+
+  const saveImmersionTime = useCallback(async () => {
+    if (startTimeRef.current === null) return;
+    
+    const now = new Date();
+    const startDate = new Date(startTimeRef.current);
+    
+    try {
+      const result = await insertMangaLog(
+        startDate.toISOString(),
+        now.toISOString()
+      );
+
+      if (result?.error) {
+        if (result.error.message?.includes('auth')) {
+          toast.error('Please sign in to track your reading progress');
+        } else {
+          toast.error('Failed to save reading progress');
+        }
+      } else if (!result) {
+        toast.error('Failed to save reading progress');
+      } else {
+        toast.success('Reading progress saved');
+      }
+    } catch (error) {
+      console.error('Failed to log reading session:', error);
+      toast.error('Failed to save reading progress');
+    }
+  }, []);
+
   useEffect(() => {
-    console.log('Starting immersion timer');
-    const now = Date.now();
-    startTimeRef.current = now;
-    setIsPaused(false);
+    if (!startTimeRef.current) {
+      console.log('Starting immersion timer');
+      startTimeRef.current = Date.now();
+    }
     
     const startTimer = () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
       
-      timerRef.current = setInterval(() => {
-        if (startTimeRef.current !== null && !isPaused) {
-          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-          setWatchTime(elapsed);
-        }
-      }, 1000);
+      if (!isPaused) {
+        timerRef.current = setInterval(() => {
+          if (startTimeRef.current !== null) {
+            const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+            setWatchTime(elapsed);
+          }
+        }, 1000);
+      }
     };
 
     startTimer();
 
     return () => {
-      if (startTimeRef.current !== null) {
-        saveImmersionTime().catch(error => {
-          console.error('Failed to save immersion time on unmount:', error);
-        });
-      }
       if (timerRef.current) {
         clearInterval(timerRef.current);
+        timerRef.current = null;
       }
     };
-  }, []); // Empty dependency array to only run on mount/unmount
+  }, [isPaused]);
 
-  // Helper function to format duration
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -105,6 +134,7 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
     if (!viewerRef.current) return;
 
     const initializeReader = async () => {
+      setIsLoading(true);
       try {
         const arrayBuffer = await file.arrayBuffer();
         const newBook = ePub(arrayBuffer);
@@ -136,7 +166,6 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
           const images = body.querySelectorAll('img');
           
           images.forEach(img => {
-            // Handle both relative and absolute paths
             if (img.src && !img.src.startsWith('blob:')) {
               const originalSrc = img.src;
               const srcAttribute = img.getAttribute('src');
@@ -225,7 +254,6 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
             window.localStorage.setItem(`epub-progress-${file.name}`, location.start.cfi);
             window.localStorage.setItem(`epub-progress-percent-${file.name}`, progress.toString());
 
-            // Update progress in IndexedDB
             const updateProgress = async () => {
               try {
                 const db = await openDB();
@@ -252,7 +280,6 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
           }
         });
 
-        // Generate locations for the entire book
         try {
           console.log('Generating locations...');
           await newBook.locations.generate(1024);
@@ -263,11 +290,10 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
           setTotalPages(100);
         }
         
-        // Display first page and load saved progress after locations are generated
+        
         try {
           const savedProgress = window.localStorage.getItem(`epub-progress-${file.name}`);
           if (savedProgress) {
-            // Verify the saved location is valid before trying to display it
             try {
               await newBook.spine.get(savedProgress);
               await newRendition.display(savedProgress);
@@ -307,9 +333,11 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
           });
         }
 
+        setIsLoading(false);
       } catch (error) {
         console.error('Error initializing EPUB reader:', error);
         toast.error('Failed to load EPUB file');
+        setIsLoading(false);
       }
     };
 
@@ -360,12 +388,10 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
   const getLastCfiOfSection = async (section: any) => {
     if (!rendition) return null;
     
-    // Load the section content
     const content = await section.load();
     const doc = content.ownerDocument;
     const body = doc.body;
     
-    // Get the last element in the section
     let lastElement = body.lastChild;
     while (lastElement && lastElement.nodeType !== 1) {
       lastElement = lastElement.previousSibling;
@@ -381,37 +407,10 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
     if (!rendition || !book) return;
 
     try {
-      const currentLocation = rendition.location?.start?.href;
-      if (!currentLocation || !book.spine?.spineItems) return;
-
-      const currentIndex = book.spine.spineItems.findIndex(item => item.href === currentLocation);
-      if (currentIndex === -1) return;
-
       if (isRTL) {
-        const atStartOfSection = rendition.location?.start?.displayed?.page === 1;
-        
-        if (atStartOfSection && currentIndex > 0) {
-          // Get the previous section
-          const prevSection = await book.spine.get(book.spine.spineItems[currentIndex - 1].href);
-          const lastCfi = await getLastCfiOfSection(prevSection);
-          
-          if (lastCfi) {
-            await rendition.display(lastCfi);
-          } else {
-            await rendition.display(book.spine.spineItems[currentIndex - 1].href);
-          }
-        } else {
-          await rendition.prev();
-        }
+        await rendition.prev();
       } else {
-        // Try to move to next page, if at end of section move to next section
-        const atEndOfSection = rendition.location?.start?.displayed?.page === rendition.location?.start?.displayed?.total;
-        
-        if (atEndOfSection && currentIndex < book.spine.spineItems.length - 1) {
-          await rendition.display(book.spine.spineItems[currentIndex + 1].href);
-        } else {
-          await rendition.next();
-        }
+        await rendition.next();
       }
     } catch (error) {
       console.error('Navigation error:', error);
@@ -422,37 +421,10 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
     if (!rendition || !book) return;
 
     try {
-      const currentLocation = rendition.location?.start?.href;
-      if (!currentLocation || !book.spine?.spineItems) return;
-
-      const currentIndex = book.spine.spineItems.findIndex(item => item.href === currentLocation);
-      if (currentIndex === -1) return;
-
       if (isRTL) {
-        // Try to move to next page, if at end of section move to next section
-        const atEndOfSection = rendition.location?.start?.displayed?.page === rendition.location?.start?.displayed?.total;
-        
-        if (atEndOfSection && currentIndex < book.spine.spineItems.length - 1) {
-          await rendition.display(book.spine.spineItems[currentIndex + 1].href);
-        } else {
-          await rendition.next();
-        }
+        await rendition.next();
       } else {
-        // Try to move to previous page, if at start of section move to previous section
-        const atStartOfSection = rendition.location?.start?.displayed?.page === 1;
-        
-        if (atStartOfSection && currentIndex > 0) {
-          const prevSection = await book.spine.get(book.spine.spineItems[currentIndex - 1].href);
-          const lastCfi = await getLastCfiOfSection(prevSection);
-          
-          if (lastCfi) {
-            await rendition.display(lastCfi);
-          } else {
-            await rendition.display(book.spine.spineItems[currentIndex - 1].href);
-          }
-        } else {
-          await rendition.prev();
-        }
+        await rendition.prev();
       }
     } catch (error) {
       console.error('Navigation error:', error);
@@ -530,48 +502,22 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, [rendition]);
-  const saveImmersionTime = async () => {
-    if (startTimeRef.current === null) return;
-    
-    const now = new Date();
-    const startDate = new Date(startTimeRef.current);
-    
-    try {
-      const result = await insertMangaLog(
-        startDate.toISOString(),
-        now.toISOString()
-      );
-
-      if (result.error) {
-        if (result.error.message?.includes('auth')) {
-          toast.error('Please sign in to track your reading progress');
-        } else {
-          toast.error('Failed to save reading progress');
-        }
-      } else {
-        toast.success('Reading progress saved');
-      }
-    } catch (error) {
-      console.error('Failed to log reading session:', error);
-      toast.error('Failed to save reading progress');
-    }
-  };
 
   const handlePauseImmersion = () => {
-    if (!isPaused && startTimeRef.current !== null) {
-      // Pause the timer
+    if (!isPaused) {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
       setIsPaused(true);
-    } else if (isPaused && startTimeRef.current !== null) {
-      // Resume the timer
-      startTimeRef.current = Date.now() - (watchTime * 1000);
-      timerRef.current = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - startTimeRef.current!) / 1000);
-        setWatchTime(elapsed);
-      }, 1000);
+    } else {
+      if (!startTimeRef.current) {
+        startTimeRef.current = Date.now();
+        setWatchTime(0);
+      } else {
+        const elapsedSeconds = watchTime;
+        startTimeRef.current = Date.now() - (elapsedSeconds * 1000);
+      }
       setIsPaused(false);
     }
   };
@@ -579,36 +525,24 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
   const handleManualSubmit = async () => {
     if (startTimeRef.current !== null) {
       await saveImmersionTime();
-      // Reset all timers and states
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
       startTimeRef.current = null;
       setWatchTime(0);
-      setIsPaused(false);
+      setIsPaused(true);
     }
   };
 
   useEffect(() => {
     return () => {
-      try {
-        // Cleanup book instance
-        if (book) {
-          book.destroy();
-        }
-        // Cleanup timers
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        // Cleanup data
-        cleanupEpubData().catch(error => {
-          console.error('Error cleaning up epub data on unmount:', error);
-        });
-      } catch (error) {
-        console.error('Error during component cleanup:', error);
+      if (book) {
+        book.destroy();
       }
+      cleanupEpubData().catch(error => {
+        console.error('Error cleaning up epub data on unmount:', error);
+      });
     };
   }, [book, cleanupEpubData]);
 
@@ -631,47 +565,121 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
       setIsNavigating(false);
     }
   }, [handleNextPage, isNavigating]);
-  const handleClose = async () => {
-    try {
-      if (book) {
-        book.destroy();
-      }
+  const handleClose = useCallback(async () => {
+    setIsClosing(true);
+    setTimeout(async () => {
+      try {
+        if (book) {
+          book.destroy();
+        }
 
-      if (startTimeRef.current !== null) {
-        try {
+        if (startTimeRef.current !== null) {
           await saveImmersionTime();
-        } catch (error) {
-          console.error('Failed to save immersion time on close:', error);
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          startTimeRef.current = null;
+          setWatchTime(0);
+          setIsPaused(false);
         }
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        startTimeRef.current = null;
-        setWatchTime(0);
-        setIsPaused(false);
+        await cleanupEpubData();
+        onClose();
+      } catch (error) {
+        console.error('Error during cleanup:', error);
+        onClose();
       }
-      await cleanupEpubData();
-      onClose();
+    }, 300); // Match the duration of the exit animation
+  }, [book, cleanupEpubData, onClose, saveImmersionTime]);
+
+  const handlePageChange = useCallback(async (newPage: number) => {
+    if (!rendition || !book || !book.spine || newPage < 1 || newPage > totalPages) return;
+    
+    try {
+      setIsNavigating(true);
+      const spineIndex = Math.floor((newPage - 1) / totalPages * book.spine.spineItems.length);
+      const spineItem = book.spine.spineItems[spineIndex];
+      if (spineItem) {
+        await rendition.display(spineItem.href);
+        setCurrentPage(newPage);
+      }
     } catch (error) {
-      console.error('Error during cleanup:', error);
-      onClose();
+      console.error('Error navigating to page:', error);
+    } finally {
+      setIsNavigating(false);
     }
-  };
+  }, [rendition, book, totalPages]);
 
   return (
     <div 
       ref={containerRef} 
-      className={`flex flex-col ${isFullscreen ? 'fixed inset-0 z-50' : 'h-[90vh] w-full rounded-xl border-8 border-[#F87171]'}`}
+      className={`flex flex-col bg-background fixed inset-0 transition-all duration-1000 ease-in-out z-50 transform-gpu ${
+        isFullscreen 
+          ? '' 
+          : 'h-[95vh] max-w-[95vw] w-[95vw] m-auto inset-0 rounded-xl border-8 border-[#F87171] overflow-hidden'
+      }`}
+      style={{
+        animation: isClosing 
+          ? 'viewer-close 500ms ease-in-out forwards'
+          : 'viewer-open 1000ms ease-in-out forwards'
+      }}
     >
+      <style>{`
+        @keyframes viewer-open {
+          0% {
+            opacity: 0;
+            transform: scale(0.95) translateY(2rem);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+        }
+        @keyframes viewer-close {
+          0% {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+          100% {
+            opacity: 0;
+            transform: scale(0.95) translateY(2rem);
+          }
+        }
+        @keyframes header-open {
+          0% {
+            opacity: 0;
+            transform: translateY(-2rem);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes header-close {
+          0% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          100% {
+            opacity: 0;
+            transform: translateY(-2rem);
+          }
+        }
+      `}</style>
       {/* Header */}
-      <div className="flex justify-between items-center p-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className={`flex justify-between items-center p-4 bg-[#111827] border-b border-[#F87171]/20 shadow-lg transition-all duration-1000 ease-in-out transform-gpu`}
+      style={{
+        animation: isClosing 
+          ? 'header-close 500ms ease-in-out forwards'
+          : 'header-open 1000ms ease-in-out forwards'
+      }}
+      >
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={handlePrevPageClick}
-            disabled={currentPage === 1 || isNavigating}
-            className="flex items-center gap-2 min-w-[100px]"
+            onClick={handleNextPageClick}
+            disabled={isNavigating}
+            className="flex items-center gap-2 min-w-[100px] bg-[#1f2937] hover:bg-[#374151] hover:text-[#F87171] hover:border-[#F87171] transition-all"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="m15 18-6-6 6-6"/>
@@ -680,9 +688,9 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
           </Button>
           <Button
             variant="outline"
-            onClick={handleNextPageClick}
-            disabled={currentPage >= totalPages || isNavigating}
-            className="flex items-center gap-2 min-w-[100px]"
+            onClick={handlePrevPageClick}
+            disabled={isNavigating}
+            className="flex items-center gap-2 min-w-[100px] bg-[#1f2937] hover:bg-[#374151] hover:text-[#F87171] hover:border-[#F87171] transition-all"
           >
             Previous
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -696,12 +704,12 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
             <Button
               variant="ghost"
               onClick={() => setShowToc(true)}
-              className="text-sm hover:text-[#F87171] transition-colors"
+              className="text-sm bg-[#1f2937] hover:text-[#F87171] hover:bg-[#374151] transition-all"
             >
               Contents
             </Button>
             <span className="text-muted-foreground">
-              Immersion time: {formatDuration(watchTime)}
+              Time: {formatDuration(watchTime)}
             </span>
             <div className="flex gap-1">
               <Button
@@ -709,8 +717,8 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
                 size="sm"
                 onClick={handlePauseImmersion}
                 disabled={startTimeRef.current === null}
-                className={`p-1 hover:text-[#F87171] transition-colors ${
-                  isPaused ? 'text-[#F87171]' : ''
+                className={`p-1 hover:bg-[#374151] hover:text-[#F87171] transition-all ${
+                  isPaused ? 'text-[#F87171] bg-[#1f2937]' : ''
                 }`}
                 title={isPaused ? "Resume" : "Pause"}
               >
@@ -730,7 +738,7 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
                 size="sm"
                 onClick={handleManualSubmit}
                 disabled={startTimeRef.current === null}
-                className="p-1 hover:bg-[#F87171] hover:text-white transition-colors"
+                className="p-1 hover:bg-[#F87171] hover:text-white transition-all bg-[#1f2937]"
                 title="Submit"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -739,37 +747,53 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
               </Button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={theme}
-              onChange={(e) => setTheme(e.target.value as 'light' | 'sepia' | 'dark')}
-              className="bg-transparent border rounded px-2 py-1"
-            >
-              <option value="light">Light</option>
-              <option value="sepia">Sepia</option>
-              <option value="dark">Dark</option>
-            </select>
-            <div className="flex items-center gap-2">
-              <Label>Font Size</Label>
-              <Slider
-                value={[fontSize]}
-                onValueChange={([value]) => setFontSize(value)}
-                min={50}
-                max={200}
-                step={10}
-                className="w-32"
-              />
-            </div>
-          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="hover:text-[#FFFFFF] bg-[#1f2937] transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <span className="ml-2">Settings</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 bg-[#111827]">
+              <div className="flex flex-col gap-4 p-2">
+                <div className="space-y-2">
+                  <Label>Theme</Label>
+                  <select
+                    value={theme}
+                    onChange={(e) => setTheme(e.target.value as 'light' | 'sepia' | 'dark')}
+                    className="w-full bg-transparent border rounded px-2 py-1 focus:border-[#F87171] bg-[#1f2937] focus:ring-[#F87171] hover:border-[#F87171] transition-colors"
+                  >
+                    <option value="light">Light</option>
+                    <option value="sepia">Sepia</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Font Size: {fontSize}%</Label>
+                  <Slider
+                    value={[fontSize]}
+                    onValueChange={([value]) => setFontSize(value)}
+                    min={50}
+                    max={200}
+                    step={10}
+                    className="w-full [&>[role=slider]]:bg-[#F87171] [&>[role=slider]]:border-[#F87171] [&>[role=slider]]:hover:bg-[#F87171]/90 [&_[data-orientation=horizontal]]:bg-[#F87171]/20"
+                  />
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
 
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="ghost" className="w-[120px] hover:text-[#F87171] transition-colors">
+            <Button variant="ghost" size="sm" className="hover:text-[#FFFFFF] bg-[#1f2937] transition-colors">
               {currentPage} / {totalPages}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-80">
+          <PopoverContent className="w-80 bg-[#111827]">
             <div className="flex flex-col gap-4">
               <div className="flex gap-2">
                 <Input
@@ -777,7 +801,8 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
                   min={1}
                   max={totalPages}
                   value={currentPage}
-                  onChange={(e) => setCurrentPage(Number(e.target.value))}
+                  onChange={(e) => handlePageChange(Number(e.target.value))}
+                  className="focus:border-[#F87171] focus:ring-[#F87171] hover:border-[#F87171] transition-colors"
                 />
                 <span className="text-sm text-muted-foreground py-2">
                   of {totalPages}
@@ -788,8 +813,8 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
                 min={1}
                 max={totalPages}
                 step={1}
-                onValueChange={([value]) => setCurrentPage(value)}
-                className="[&>[role=slider]]:bg-[#F87171]"
+                onValueChange={([value]) => handlePageChange(value)}
+                className="[&>[role=slider]]:bg-[#F87171] [&>[role=slider]]:border-[#F87171] [&>[role=slider]]:hover:bg-[#F87171]/90 [&_[data-orientation=horizontal]]:bg-[#F87171]/20"
               />
             </div>
           </PopoverContent>
@@ -800,7 +825,7 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
             variant="outline" 
             size="icon" 
             onClick={toggleFullscreen}
-            className="hover:text-[#F87171] transition-colors"
+            className="bg-[#1f2937] hover:bg-[#374151] hover:text-[#F87171] hover:border-[#F87171] transition-all"
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
           >
             {isFullscreen ? (
@@ -812,7 +837,7 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
           <Button 
             variant="ghost" 
             onClick={handleClose}
-            className="hover:text-[#F87171] transition-colors"
+            className="bg-[#1f2937] hover:bg-[#374151] hover:text-[#F87171] transition-all"
           >
             Close
           </Button>
@@ -820,7 +845,19 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
       </div>
 
       {/* Content */}
-      <div className="flex-1 relative">
+      <div className={`flex-1 relative ${
+        isClosing 
+          ? 'animate-out zoom-out-95 duration-200' 
+          : 'animate-in zoom-in-95 duration-500 delay-150'
+      }`}>
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#111827]/80 z-10">
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-[#F87171]" />
+              <p className="text-sm text-muted-foreground">Loading book...</p>
+            </div>
+          </div>
+        )}
         <div ref={viewerRef} className="absolute inset-0" />
       </div>
 
@@ -828,8 +865,8 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
       <div className="fixed inset-y-0 left-0 flex items-center px-4 pointer-events-none">
         <Button
           variant="outline"
-          onClick={handlePrevPageClick}
-          disabled={currentPage === 1 || isNavigating}
+          onClick={handleNextPageClick}
+          disabled={isNavigating}
           className="pointer-events-auto opacity-0 hover:opacity-100 transition-opacity bg-background/80 hover:bg-background"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -840,8 +877,8 @@ export function EpubViewer({ file, onClose, openDB, entryId, onProgressUpdate }:
       <div className="fixed inset-y-0 right-0 flex items-center px-4 pointer-events-none">
         <Button
           variant="outline"
-          onClick={handleNextPageClick}
-          disabled={currentPage >= totalPages || isNavigating}
+          onClick={handlePrevPageClick}
+          disabled={isNavigating}
           className="pointer-events-auto opacity-0 hover:opacity-100 transition-opacity bg-background/80 hover:bg-background"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

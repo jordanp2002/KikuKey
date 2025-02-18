@@ -22,8 +22,8 @@ export default function YouTubePlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const opts = {
-    height: '1080',
-    width: '1920',
+    height: '100%',
+    width: '100%',
     playerVars: {
       autoplay: 0,
       controls: 1,
@@ -245,100 +245,112 @@ export default function YouTubePlayer() {
   };
 
   return (
-    <div className="grid grid-rows-[auto_1fr] gap-6 h-full">
+    <div className="flex flex-col gap-4 h-full">
       {/* Top controls */}
-      <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-4 px-4 py-2 bg-white dark:bg-gray-900 rounded-[30px] shadow-lg">
-        <div className="flex flex-wrap gap-4">
+      <div className="flex items-center justify-between gap-4 px-4 py-2 bg-white dark:bg-gray-900 rounded-lg shadow-sm">
+        <div className="flex items-center gap-3">
           <form onSubmit={handleUrlSubmit} className="flex gap-2">
             <Input
               type="text"
               value={videoUrl}
               onChange={(e) => setVideoUrl(e.target.value)}
               placeholder="Enter YouTube URL"
-              className="w-64"
+              className="w-64 focus-visible:ring-[#F87171]"
             />
-            <Button type="submit" variant="outline" size="sm" className="hover:text-[#F87171] hover:border-[#F87171] transition-colors rounded-full">
+            <Button 
+              type="submit" 
+              variant="ghost"
+              size="sm" 
+              className="hover:bg-[#F87171] hover:text-white transition-colors"
+              disabled={!videoUrl}
+            >
               Load Video
             </Button>
           </form>
         </div>
 
         {/* Time tracker with pause and submit buttons */}
-        <div className="flex items-center justify-end gap-4 text-sm font-medium">
-          <div className="flex items-center gap-2">
-            <span className="text-gray-600 dark:text-gray-300">
-              Immersion time: {formatDuration(watchTime)}
-            </span>
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handlePauseImmersion}
-                disabled={startTimeRef.current === null}
-                className={`p-1 hover:text-[#F87171] transition-colors ${
-                  isPaused ? 'text-[#F87171]' : ''
-                }`}
-                title={isPaused ? "Resume" : "Pause"}
-              >
-                {isPaused ? (
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
+                Immersion time: {formatDuration(watchTime)}
+              </span>
+              <div className="flex gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handlePauseImmersion}
+                  disabled={startTimeRef.current === null}
+                  className={`p-1 hover:bg-[#F87171] hover:text-white transition-colors ${
+                    isPaused ? 'text-[#F87171]' : ''
+                  }`}
+                  title={isPaused ? "Resume" : "Pause"}
+                >
+                  {isPaused ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="6" y="4" width="4" height="16"></rect>
+                      <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleManualSubmit}
+                  disabled={startTimeRef.current === null}
+                  className="p-1 hover:bg-[#F87171] hover:text-white transition-colors"
+                  title="Submit and reset timer"
+                >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    <polyline points="20 6 9 17 4 12"></polyline>
                   </svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="6" y="4" width="4" height="16"></rect>
-                    <rect x="14" y="4" width="4" height="16"></rect>
-                  </svg>
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleManualSubmit}
-                disabled={startTimeRef.current === null}
-                className="p-1 hover:text-[#F87171] transition-colors"
-                title="Submit and reset timer"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </Button>
+                </Button>
+              </div>
             </div>
+
+            <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
+              {formatDuration(currentTime)} / {formatDuration(duration)}
+            </span>
           </div>
-          <span className="text-gray-400 dark:text-gray-500">|</span>
-          <span className="text-gray-600 dark:text-gray-300">
-            {formatDuration(currentTime)} / {formatDuration(duration)}
-          </span>
         </div>
       </div>
 
       {/* Video container */}
-      <div className="flex justify-center items-center h-full">
-        <div className="relative w-full max-w-[1280px] rounded-lg overflow-hidden shadow-lg">
-          {videoId ? (
-            <div className="aspect-video w-full relative">
+      <div className="flex-1 min-h-0 bg-black/5 rounded-lg overflow-hidden">
+        {videoId ? (
+          <div className="w-full h-full flex items-center justify-center p-4">
+            <div className="w-full h-full max-h-[calc(100vh-12rem)] relative" style={{ aspectRatio: '16/9' }}>
               <YouTube
                 videoId={videoId}
-                opts={opts}
+                opts={{
+                  ...opts,
+                  height: '100%',
+                  width: '100%',
+                }}
                 onReady={handleVideoReady}
                 onStateChange={handleStateChange}
-                className="w-full h-full"
-                iframeClassName="w-full h-full"
+                className="absolute inset-0"
+                iframeClassName="w-full h-full rounded-lg"
               />
             </div>
-          ) : (
-            <div className="aspect-video w-full bg-black/10 flex items-center justify-center">
-              <div className="text-center p-6 rounded-lg">
-                <p className="text-lg font-medium text-gray-600 dark:text-gray-300 mb-2">
-                  No video loaded
-                </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Enter a YouTube URL above to load a video
-                </p>
-              </div>
+          </div>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="text-center p-6 rounded-lg">
+              <p className="text-lg font-medium text-gray-600 dark:text-gray-300 mb-2">
+                No video loaded
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Enter a YouTube URL above or select a video from the playlist
+              </p>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

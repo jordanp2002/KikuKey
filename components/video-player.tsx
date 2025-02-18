@@ -24,8 +24,9 @@ import { usePlayerSettings, defaultSettings } from '@/lib/stores/player-settings
 import AnkiCardModal from './anki-card-modal';
 import { PlayerSettings } from './player-settings';
 import Link from "next/link";
+import AnkiSettingsModal from './anki-settings-modal';
 
-// Cookie names for subtitle settings
+ 
 const COOKIE_NAMES = {
   fontSize: 'subtitle_font_size',
   color: 'subtitle_color',
@@ -39,13 +40,13 @@ const COOKIE_NAMES = {
   letterSpacing: 'subtitle_letter_spacing',
 } as const;
 
-// Cookie options
+ 
 const COOKIE_OPTIONS = {
   expires: 365, 
   sameSite: 'strict',
 } as const;
 
-// Available font options
+ 
 const FONT_OPTIONS = [
   { label: 'Sans Serif', value: 'sans-serif' },
   { label: 'Serif', value: 'serif' },
@@ -57,7 +58,6 @@ const FONT_OPTIONS = [
   { label: 'Hiragino Kaku Gothic', value: '"Hiragino Kaku Gothic ProN", sans-serif' },
 ] as const;
 
-// Font weight options
 const FONT_WEIGHT_OPTIONS = [
   { label: 'Thin', value: '100' },
   { label: 'Extra Light', value: '200' },
@@ -70,7 +70,6 @@ const FONT_WEIGHT_OPTIONS = [
   { label: 'Black', value: '900' },
 ] as const;
 
-// Font style options
 const FONT_STYLE_OPTIONS = [
   { label: 'Normal', value: 'normal' },
   { label: 'Italic', value: 'italic' },
@@ -80,6 +79,56 @@ interface VideoSource {
   src: string;
   type: string;
 }
+const getSupportedCodecs = () => {
+  if (typeof window === 'undefined') {
+    return { video: [], audio: [] };
+  }
+
+  const codecs = {
+    video: [] as string[],
+    audio: [] as string[]
+  };
+
+  const videoTypes = [
+    'video/mp4; codecs="avc1.42E01E"',
+    'video/mp4; codecs="avc1.4D401E"', 
+    'video/mp4; codecs="avc1.64001E"', 
+    'video/mp4; codecs="vp8"',
+    'video/mp4; codecs="vp9"',
+    'video/mp4; codecs="av01"',
+    'video/webm; codecs="vp8"',
+    'video/webm; codecs="vp9"',
+    'video/mp4; codecs="hevc"',
+  ];
+
+  const audioTypes = [
+    'audio/mp4; codecs="mp4a.40.2"', 
+    'audio/mpeg',
+    'audio/webm; codecs="opus"',
+    'audio/webm; codecs="vorbis"',
+    'audio/wav; codecs="1"',
+    'audio/flac',
+  ];
+
+  const testCodec = (type: string) => {
+    const video = document.createElement('video');
+    return video.canPlayType(type) !== '';
+  };
+
+  videoTypes.forEach(codec => {
+    if (testCodec(codec)) {
+      codecs.video.push(codec);
+    }
+  });
+
+  audioTypes.forEach(codec => {
+    if (testCodec(codec)) {
+      codecs.audio.push(codec);
+    }
+  });
+
+  return codecs;
+};
 
 export default function VideoPlayer() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -113,8 +162,8 @@ export default function VideoPlayer() {
     [ankiSettings]
   );
   const playerSettings = usePlayerSettings();
+  const [supportedCodecs] = useState(getSupportedCodecs());
 
-  // Initialize subtitle settings from cookies or defaults
   const [subtitleFontSize, setSubtitleFontSize] = useState(() => {
     const saved = Cookies.get(COOKIE_NAMES.fontSize);
     return saved ? parseInt(saved) : 22;
@@ -124,7 +173,7 @@ export default function VideoPlayer() {
   });
   const [subtitlePosition, setSubtitlePosition] = useState(() => {
     const saved = Cookies.get(COOKIE_NAMES.position);
-    return saved ? parseInt(saved) : 80;
+    return saved ? parseInt(saved) : 500; 
   });
   const [subtitleStrokeColor, setSubtitleStrokeColor] = useState(() => {
     return Cookies.get(COOKIE_NAMES.strokeColor) || '#000000';
@@ -137,7 +186,8 @@ export default function VideoPlayer() {
     return Cookies.get(COOKIE_NAMES.fontFamily) || FONT_OPTIONS[0].value;
   });
   const [subtitleFontWeight, setSubtitleFontWeight] = useState(() => {
-    return Cookies.get(COOKIE_NAMES.fontWeight) || FONT_WEIGHT_OPTIONS[3].value;
+    const saved = Cookies.get(COOKIE_NAMES.fontWeight);
+    return saved || '400';
   });
   const [subtitleFontStyle, setSubtitleFontStyle] = useState(() => {
     return Cookies.get(COOKIE_NAMES.fontStyle) || FONT_STYLE_OPTIONS[0].value;
@@ -147,7 +197,10 @@ export default function VideoPlayer() {
     return saved ? parseFloat(saved) : 0;
   });
 
-  // Update cookies when settings change
+  const [isAnkiSettingsOpen, setIsAnkiSettingsOpen] = useState(false);
+  const [isFullscreenTranscriptVisible, setIsFullscreenTranscriptVisible] = useState(false);
+  const fullscreenTranscriptRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     Cookies.set(COOKIE_NAMES.fontSize, subtitleFontSize.toString(), COOKIE_OPTIONS);
   }, [subtitleFontSize]);
@@ -184,12 +237,10 @@ export default function VideoPlayer() {
     Cookies.set(COOKIE_NAMES.letterSpacing, subtitleLetterSpacing.toString(), COOKIE_OPTIONS);
   }, [subtitleLetterSpacing]);
 
-  // Add effect to save hover-pause setting
   useEffect(() => {
     Cookies.set(COOKIE_NAMES.hoverPause, hoverPause.toString(), COOKIE_OPTIONS);
   }, [hoverPause]);
 
-  // Create subtitle styles string
   const subtitleStyles = `
 .video-js .vjs-text-track-display {
   pointer-events: auto !important;
@@ -197,7 +248,6 @@ export default function VideoPlayer() {
 
 .video-js .vjs-text-track-cue {
   background-color: transparent !important;
-  text-shadow: ${subtitleStrokeWidth}px ${subtitleStrokeWidth}px ${subtitleStrokeWidth}px ${subtitleStrokeColor} !important;
   font-size: ${subtitleFontSize}px !important;
   font-family: ${subtitleFontFamily} !important;
   font-weight: ${subtitleFontWeight} !important;
@@ -207,6 +257,8 @@ export default function VideoPlayer() {
   pointer-events: auto !important;
   cursor: text !important;
   color: ${subtitleColor} !important;
+  -webkit-text-stroke: ${subtitleStrokeWidth}px ${subtitleStrokeColor} !important;
+  text-stroke: ${subtitleStrokeWidth}px ${subtitleStrokeColor} !important;
 }
 
 .video-js .vjs-text-track-cue > * {
@@ -218,6 +270,9 @@ export default function VideoPlayer() {
   font-weight: ${subtitleFontWeight} !important;
   font-style: ${subtitleFontStyle} !important;
   letter-spacing: ${subtitleLetterSpacing}em !important;
+  font-size: ${subtitleFontSize}px !important;
+  -webkit-text-stroke: ${subtitleStrokeWidth}px ${subtitleStrokeColor} !important;
+  text-stroke: ${subtitleStrokeWidth}px ${subtitleStrokeColor} !important;
 }
 
 .video-js .vjs-text-track-cue:hover {
@@ -244,22 +299,26 @@ export default function VideoPlayer() {
   background: rgba(17, 24, 39, 0.9) !important;
   border-bottom-left-radius: 0.75rem;
   border-bottom-right-radius: 0.75rem;
-  height: 40px !important;
+  height: 48px !important;
   display: flex !important;
   align-items: center !important;
-  padding-top: 8px !important;
+  padding: 0 16px !important;
+  backdrop-filter: blur(8px) !important;
 }
 
 /* Play/Pause button */
 .video-js .vjs-play-control {
   color: white !important;
   height: 32px !important;
-  line-height: 32px !important;
-  margin-top: -8px !important;
+  width: 32px !important;
+  margin-right: 8px !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
 }
 
 .video-js .vjs-play-control:hover {
-  color: #F87171 !important;
+  color: white !important;
+  background-color: rgba(248, 113, 113, 0.9) !important;
 }
 
 /* Volume control */
@@ -268,11 +327,15 @@ export default function VideoPlayer() {
   height: 32px !important;
   display: flex !important;
   align-items: center !important;
-  margin-top: -8px !important;
+  margin-right: 8px !important;
 }
 
 .video-js .vjs-volume-panel:hover {
-  color: #F87171 !important;
+  color: white !important;
+}
+
+.video-js .vjs-volume-panel:hover .vjs-volume-control {
+  background-color: rgba(248, 113, 113, 0.1) !important;
 }
 
 .video-js .vjs-volume-panel .vjs-volume-control {
@@ -280,16 +343,27 @@ export default function VideoPlayer() {
   height: 32px !important;
   display: flex !important;
   align-items: center !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
+  padding: 0 8px !important;
 }
 
 .video-js .vjs-volume-bar.vjs-slider-horizontal {
   height: 4px !important;
-  margin: 0 10px !important;
+  margin: 0 !important;
+  background-color: rgba(255, 255, 255, 0.2) !important;
+  border-radius: 2px !important;
 }
 
 .video-js .vjs-slider-horizontal .vjs-volume-level {
   height: 4px !important;
   background-color: #F87171 !important;
+  border-radius: 2px !important;
+}
+
+.video-js .vjs-volume-level:before {
+  color: #F87171 !important;
+  font-size: 1em !important;
 }
 
 /* Progress bar */
@@ -299,8 +373,8 @@ export default function VideoPlayer() {
   display: flex !important;
   align-items: center !important;
   flex: 1 !important;
-  margin: 0 10px !important;
-  margin-top: -8px !important;
+  margin: 0 16px !important;
+  cursor: pointer !important;
 }
 
 .video-js .vjs-progress-holder {
@@ -308,19 +382,45 @@ export default function VideoPlayer() {
   width: 100% !important;
   margin: 0 !important;
   background: rgba(255, 255, 255, 0.2) !important;
-  transition: height 0.2s !important;
+  border-radius: 2px !important;
+  transition: all 0.2s !important;
 }
 
 .video-js .vjs-progress-control:hover .vjs-progress-holder {
-  height: 8px !important;
+  height: 6px !important;
 }
 
 .video-js .vjs-play-progress {
   background-color: #F87171 !important;
+  border-radius: 2px !important;
+  transition: all 0.2s !important;
 }
 
 .video-js .vjs-play-progress:before {
-  display: none !important;
+  content: '' !important;
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 50% !important;
+  background-color: #F87171 !important;
+  position: absolute !important;
+  right: -6px !important;
+  top: 50% !important;
+  transform: translateY(-50%) scale(0) !important;
+  transition: transform 0.2s !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+}
+
+.video-js .vjs-progress-control:hover .vjs-play-progress:before {
+  transform: translateY(-50%) scale(1) !important;
+}
+
+.video-js .vjs-load-progress {
+  background: rgba(255, 255, 255, 0.3) !important;
+  border-radius: 2px !important;
+}
+
+.video-js .vjs-load-progress div {
+  background: rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Time display */
@@ -330,37 +430,75 @@ export default function VideoPlayer() {
   min-width: auto !important;
   height: 32px !important;
   line-height: 32px !important;
-  margin-top: -8px !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-weight: 500 !important;
+}
+
+.video-js .vjs-current-time {
+  margin-right: 0 !important;
+  padding-right: 0 !important;
+}
+
+.video-js .vjs-duration {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+}
+
+.video-js .vjs-time-divider {
+  color: rgba(255, 255, 255, 0.6) !important;
+  padding: 0 4px !important;
 }
 
 /* Playback rate */
 .video-js .vjs-playback-rate {
   height: 32px !important;
-  line-height: 32px !important;
-  margin-top: -8px !important;
+  width: 32px !important;
+  margin-left: 8px !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
+}
+
+.video-js .vjs-playback-rate:hover {
+  background-color: rgba(248, 113, 113, 0.9) !important;
 }
 
 .video-js .vjs-playback-rate .vjs-playback-rate-value {
   font-size: 13px !important;
   line-height: 32px !important;
+  font-weight: 500 !important;
 }
 
 /* Fullscreen and other buttons */
 .video-js .vjs-fullscreen-control,
 .video-js .vjs-subs-caps-button {
   height: 32px !important;
-  line-height: 32px !important;
-  margin-top: -8px !important;
+  width: 32px !important;
+  margin-left: 8px !important;
+  border-radius: 8px !important;
+  transition: all 0.2s !important;
+}
+
+.video-js .vjs-fullscreen-control:hover,
+.video-js .vjs-subs-caps-button:hover {
+  background-color: rgba(248, 113, 113, 0.9) !important;
 }
 
 /* Menu positioning */
 .video-js .vjs-menu-button-popup .vjs-menu {
-  bottom: 2em !important;
+  bottom: 40px !important;
 }
 
 .video-js .vjs-menu-content {
-  background: rgba(17, 24, 39, 0.9) !important;
-  border-radius: 0.5rem !important;
+  background: rgba(17, 24, 39, 0.95) !important;
+  border-radius: 8px !important;
+  padding: 4px !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.video-js .vjs-menu-content .vjs-menu-item {
+  border-radius: 4px !important;
+  transition: all 0.2s !important;
+  margin: 2px 0 !important;
 }
 
 .video-js .vjs-menu-content .vjs-menu-item:hover {
@@ -375,17 +513,20 @@ export default function VideoPlayer() {
 
 /* Big play button */
 .video-js .vjs-big-play-button {
-  background-color: #F87171 !important;
+  background-color: rgba(248, 113, 113, 0.9) !important;
   border: none !important;
-  border-radius: 9999px !important;
+  border-radius: 50% !important;
   width: 80px !important;
   height: 80px !important;
   line-height: 80px !important;
   font-size: 40px !important;
+  transition: all 0.2s !important;
+  backdrop-filter: blur(8px) !important;
 }
 
 .video-js .vjs-big-play-button:hover {
-  background-color: #EF4444 !important;
+  background-color: #F87171 !important;
+  transform: scale(1.05) !important;
 }
 
 .video-js.no-video .vjs-big-play-button {
@@ -395,7 +536,115 @@ export default function VideoPlayer() {
 .video-js.no-video .vjs-control-bar {
   display: none !important;
 }
+
+/* Time tooltip */
+.video-js .vjs-time-tooltip {
+  background-color: rgba(17, 24, 39, 0.95) !important;
+  border-radius: 4px !important;
+  padding: 4px 8px !important;
+  font-size: 12px !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Mouse display */
+.video-js .vjs-mouse-display {
+  background-color: rgba(17, 24, 39, 0.95) !important;
+  border-radius: 4px !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Fullscreen transcript panel */
+.fullscreen-transcript {
+  display: none;  /* Hide by default */
+}
+
+.video-js.vjs-fullscreen .fullscreen-transcript {
+  display: block;  /* Only show in fullscreen */
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 25%;
+  background: rgba(17, 24, 39, 0.95);
+  backdrop-filter: blur(8px);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+  transform: translateX(100%);
+  z-index: 2;
+}
+
+.video-js.vjs-fullscreen .fullscreen-transcript.visible {
+  transform: translateX(0);
+}
+
+/* Adjust transcript padding when control bar is visible */
+.video-js.vjs-fullscreen.vjs-user-active .fullscreen-transcript-content {
+  padding-bottom: 48px;
+}
+
+/* Adjust video container when transcript is visible */
+.video-js.vjs-fullscreen.transcript-visible {
+  display: flex !important;
+  flex-direction: row !important;
+}
+
+.video-js.vjs-fullscreen.transcript-visible .vjs-tech {
+  width: 75% !important;
+  height: 100% !important;
+  max-width: 75% !important;
+}
+
+.video-js.vjs-fullscreen.transcript-visible .vjs-text-track-display {
+  width: 75% !important;
+}
+
+.video-js.vjs-fullscreen .fullscreen-transcript-content {
+  height: 100%;
+  overflow-y: auto;
+  padding: 1rem;
+  color: white;
+  transition: padding-bottom 0.3s ease;
+}
+
+.video-js.vjs-fullscreen .fullscreen-transcript-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.video-js.vjs-fullscreen .fullscreen-transcript-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.video-js.vjs-fullscreen .fullscreen-transcript-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.video-js.vjs-fullscreen .fullscreen-transcript-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* Transcript toggle button */
+.vjs-transcript-control {
+  cursor: pointer;
+  display: none;
+}
+
+.video-js.vjs-fullscreen .vjs-transcript-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-js.vjs-fullscreen .vjs-transcript-control:hover {
+  text-shadow: 0 0 1em #fff;
+}
+
+/* Control bar adjustments for fullscreen with transcript */
+.video-js.vjs-fullscreen.transcript-visible .vjs-control-bar {
+  width: 75% !important;
+}
 `;
+
   useEffect(() => {
     const styleSheet = document.createElement("style");
     styleSheet.textContent = subtitleStyles;
@@ -415,7 +664,8 @@ export default function VideoPlayer() {
         nativeVideoTracks: false,
         nativeTextTracks: false,
         vhs: {
-          overrideNative: true
+          overrideNative: true,
+          cacheEncryptionKeys: true
         }
       },
       tracks: [],
@@ -433,10 +683,27 @@ export default function VideoPlayer() {
             name: 'SubsCapsButton',
             kind: 'subtitles'
           },
+          {
+            name: 'Button',
+            text: 'T',
+            className: 'vjs-transcript-control',
+            onclick: () => {
+              setIsFullscreenTranscriptVisible(!isFullscreenTranscriptVisible);
+              const player = playerRef.current;
+              if (player) {
+                player.el().classList.toggle('transcript-visible');
+              }
+            }
+          },
           "fullscreenToggle",
         ],
       },
     });
+
+    if (supportedCodecs.video.length > 0) {
+      playerRef.current.options_.techOrder = ['html5'];
+      playerRef.current.options_.sourceTypes = supportedCodecs.video;
+    }
 
     playerRef.current.addClass('no-video');
 
@@ -452,8 +719,70 @@ export default function VideoPlayer() {
       }
       document.head.removeChild(styleSheet);
     };
-  }, []);
+  }, [supportedCodecs]);
 
+  
+  useEffect(() => {
+    if (!playerRef.current) return;
+
+    const handleTimeUpdate = () => {
+      const currentTime = playerRef.current.currentTime();
+      const adjustedCurrentTime = currentTime - (subtitleOffset / 1000);
+      const currentSub = subtitles.find(
+        sub => adjustedCurrentTime >= sub.startTime && adjustedCurrentTime <= sub.endTime
+      );
+      
+      if (currentSub) {
+        setCurrentSubtitleId(currentSub.id);
+        
+        
+        const element = document.getElementById(`subtitle-${currentSub.id}`);
+        if (element && transcriptRef.current) {
+          const container = transcriptRef.current;
+          const elementTop = element.offsetTop;
+          const containerScrollTop = container.scrollTop;
+          const containerHeight = container.clientHeight;
+          const elementHeight = element.clientHeight;
+
+          if (elementTop < containerScrollTop || elementTop > containerScrollTop + containerHeight - elementHeight) {
+            container.scrollTo({
+              top: elementTop - containerHeight / 2 + elementHeight / 2,
+              behavior: 'smooth'
+            });
+          }
+        }
+        
+        
+        const fullscreenElement = document.getElementById(`subtitle-fullscreen-${currentSub.id}`);
+        if (fullscreenElement && fullscreenTranscriptRef.current) {
+          const container = fullscreenTranscriptRef.current;
+          const elementTop = fullscreenElement.offsetTop;
+          const containerScrollTop = container.scrollTop;
+          const containerHeight = container.clientHeight;
+          const elementHeight = fullscreenElement.clientHeight;
+
+          if (elementTop < containerScrollTop || elementTop > containerScrollTop + containerHeight - elementHeight) {
+            container.scrollTo({
+              top: elementTop - containerHeight / 2 + elementHeight / 2,
+              behavior: 'smooth'
+            });
+          }
+        }
+      } else {
+        setCurrentSubtitleId(null);
+      }
+    };
+
+    playerRef.current.on('timeupdate', handleTimeUpdate);
+    
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.off('timeupdate', handleTimeUpdate);
+      }
+    };
+  }, [subtitles, subtitleOffset]);
+
+  
   useEffect(() => {
     if (!playerRef.current) return;
 
@@ -466,24 +795,11 @@ export default function VideoPlayer() {
     };
 
     const handlePlay = () => {
-      // Start new session if no timer has ever run
       if (startTimeRef.current === null) {
+        
         const now = Date.now();
         startTimeRef.current = now;
         setVideoStartTime(new Date(now).toLocaleTimeString());
-        timerRef.current = setInterval(() => {
-          const elapsed = Math.floor((Date.now() - startTimeRef.current!) / 1000);
-          setWatchTime(elapsed);
-        }, 1000);
-        setIsPaused(false);
-      } 
-      // Resume timer if it was manually paused
-      else if (isPaused) {
-        handlePauseImmersion();
-      }
-      // If timer was temporarily paused due to video change or end, resume it
-      else if (!timerRef.current && watchTimeRef.current !== undefined) {
-        startTimeRef.current = Date.now() - (watchTimeRef.current * 1000);
         timerRef.current = setInterval(() => {
           const elapsed = Math.floor((Date.now() - startTimeRef.current!) / 1000);
           setWatchTime(elapsed);
@@ -493,7 +809,7 @@ export default function VideoPlayer() {
     };
 
     const handleEnded = () => {
-      // Just pause the timer if it's running
+      
       if (!isPaused && timerRef.current) {
         watchTimeRef.current = watchTime;
         clearInterval(timerRef.current);
@@ -502,7 +818,6 @@ export default function VideoPlayer() {
       }
     };
 
-    // Add event listeners for video events
     playerRef.current.on('timeupdate', handleTimeUpdate);
     playerRef.current.on('durationchange', handleDurationChange);
     playerRef.current.on('ended', handleEnded);
@@ -524,41 +839,49 @@ export default function VideoPlayer() {
   useEffect(() => {
     if (!playerRef.current || !videoSource) return;
     
-    // Store current timer state
     const wasTimerPaused = isPaused;
     const currentWatchTime = watchTime;
-    
-    // Reset the player source
-    playerRef.current.src({
+  
+    let source = {
       src: videoSource.src,
-      type: videoSource.type || 'video/mp4'
-    });
-    
+      type: videoSource.type
+    };
+
+    if (videoSource.type === 'video/x-matroska' || !supportedCodecs.video.includes(videoSource.type)) {
+      const preferredCodecs = [
+        'video/mp4; codecs="avc1.64001E"',  
+        'video/webm; codecs="vp9"',         
+        'video/mp4; codecs="avc1.4D401E"',  
+        'video/mp4; codecs="avc1.42E01E"', 
+      ];
+      
+      const supportedCodec = preferredCodecs.find(codec => supportedCodecs.video.includes(codec));
+      if (supportedCodec) {
+        source.type = supportedCodec.split(';')[0]; 
+      }
+    }
+
+    playerRef.current.src(source);
     playerRef.current.load();
     playerRef.current.removeClass('no-video');
 
-    // Store the current watch time if timer was running or paused
     if (startTimeRef.current !== null) {
       watchTimeRef.current = currentWatchTime;
-      // Clear any existing interval
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      // Only set isPaused if it wasn't already paused
       if (!wasTimerPaused) {
         setIsPaused(false);
       }
     }
 
-  }, [videoSource]);
+  }, [videoSource, supportedCodecs]);
 
   const adjustSubtitleTiming = (offsetMs: number) => {
     const newOffset = subtitleOffset + offsetMs;
     setSubtitleOffset(newOffset);
     setCustomOffset(newOffset.toString());
-
-    // Update video subtitles
     const track = playerRef.current.textTracks()[0];
     if (track && track.cues) {
       const wasShowing = track.mode === 'showing';
@@ -599,10 +922,15 @@ export default function VideoPlayer() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    let mimeType = file.type;
+    if (file.name.toLowerCase().endsWith('.mkv')) {
+      mimeType = 'video/x-matroska';
+    }
+
     const url = URL.createObjectURL(file);
     setVideoSource({
       src: url,
-      type: file.type || 'video/mp4'
+      type: mimeType
     });
   };
 
@@ -660,17 +988,16 @@ export default function VideoPlayer() {
         }
 
         setSubtitles(validSubs);
-
-        // Create a new text track
         const track = playerRef.current.addTextTrack("subtitles", "Japanese", "ja");
-
-        // Add cues to the track
         validSubs.forEach((sub) => {
           try {
             const cue = new VTTCue(sub.startTime, sub.endTime, sub.text);
-            (cue as any).originalStartTime = sub.startTime;
-            (cue as any).originalEndTime = sub.endTime;
             cue.line = subtitlePosition;
+            cue.snapToLines = false;
+            cue.vertical = '';
+            cue.align = 'center';
+            cue.position = 50;
+            cue.positionAlign = 'center';
             track.addCue(cue);
           } catch (error) {
             console.error('Error adding cue:', error, sub);
@@ -678,15 +1005,7 @@ export default function VideoPlayer() {
         });
 
         track.mode = "showing";
-
         playerRef.current.textTrackDisplay.updateDisplay();
-
-        setTimeout(() => {
-          if (track.mode !== "showing") {
-            track.mode = "showing";
-            playerRef.current.textTrackDisplay.updateDisplay();
-          }
-        }, 100);
 
         setSubtitleOffset(0);
         setCustomOffset('');
@@ -759,15 +1078,15 @@ export default function VideoPlayer() {
         
         const textLines = lines.slice(lines.indexOf(timeLine) + 1);
         
-        // Clean and join the text lines
+        
         const text = textLines
           .join('\n')
-          .replace(/♪/g, '') // Remove music note symbols
-          .replace(/\{[^\}]*\}/g, '') // Remove any formatting tags
-          .replace(/\([^)]*\)/g, '') // Remove parenthetical text
-          .replace(/\[[^\]]*\]/g, '') // Remove bracketed text
-          .replace(/[<>]/g, '') // Remove HTML-like tags
-          .replace(/\s+/g, ' ') // Normalize whitespace
+          .replace(/♪/g, '') 
+          .replace(/\{[^\}]*\}/g, '') 
+          .replace(/\([^)]*\)/g, '') 
+          .replace(/\[[^\]]*\]/g, '') 
+          .replace(/[<>]/g, '') 
+          .replace(/\s+/g, ' ') 
           .trim();
 
         if (typeof startTime !== 'number' || typeof endTime !== 'number' || isNaN(startTime) || isNaN(endTime)) {
@@ -787,7 +1106,7 @@ export default function VideoPlayer() {
     try {
       const cleanTimestamp = timestamp.trim();
       
-      // ASS format: H:MM:SS.CC (hours:minutes:seconds.centiseconds)
+      
       const [time, centiseconds = '0'] = cleanTimestamp.split('.');
       const [hours, minutes, seconds] = time.split(':').map(num => {
         const parsed = parseFloat(num);
@@ -829,7 +1148,7 @@ export default function VideoPlayer() {
         
         if (!line || line.startsWith(';')) continue;
 
-        // Look for [Events] section
+        
         if (line === '[Events]') {
           isInEvents = true;
           continue;
@@ -837,7 +1156,7 @@ export default function VideoPlayer() {
 
         if (isInEvents) {
           if (line.startsWith('Format:')) {
-            // Parse format line
+            
             formatLine = line
               .substring(7)
               .split(',')
@@ -847,7 +1166,7 @@ export default function VideoPlayer() {
 
           if (line.startsWith('Dialogue:')) {
             try {
-              // Get the text after 'Dialogue:'
+              
               const dialogueContent = line.substring(9).trim();
               
               const parts: string[] = [];
@@ -880,14 +1199,14 @@ export default function VideoPlayer() {
 
               let text = fields.text || '';
               text = text
-                .replace(/\{[^\}]*\}/g, '') // Remove style codes
-                .replace(/\\N/g, ' ') // Convert ASS line breaks to spaces
-                .replace(/\\n/g, ' ') // Convert alternate line breaks
-                .replace(/\\h/g, ' ') // Convert hard spaces
-                .replace(/[｟｠]/g, '') // Remove Japanese quotation marks
-                .replace(/[（）]/g, '') // Remove Japanese parentheses
-                .replace(/[\\][a-zA-Z0-9&H]*[\\]?/g, '') // Remove ASS tags
-                .replace(/\s+/g, ' ') // Normalize spaces
+                .replace(/\{[^\}]*\}/g, '') 
+                .replace(/\\N/g, ' ') 
+                .replace(/\\n/g, ' ') 
+                .replace(/\\h/g, ' ') 
+                .replace(/[｟｠]/g, '') 
+                .replace(/[（）]/g, '') 
+                .replace(/[\\][a-zA-Z0-9&H]*[\\]?/g, '') 
+                .replace(/\s+/g, ' ') 
                 .trim();
 
               if (startTime >= 0 && endTime > startTime && text) {
@@ -900,8 +1219,6 @@ export default function VideoPlayer() {
           }
         }
       }
-
-      // Sort subtitles by start time and return
       return subtitles.sort((a, b) => a.startTime - b.startTime);
     } catch (error) {
       console.error('Error parsing ASS subtitles:', error);
@@ -931,7 +1248,7 @@ export default function VideoPlayer() {
         startDate.toISOString(),
         now.toISOString()
       );
-      if (result.error) {
+      if (result?.error) {
         if (result.error.message?.includes('auth')) {
           toast.error('Please sign in to track your video progress');
         } else {
@@ -998,7 +1315,6 @@ export default function VideoPlayer() {
       const height = container.clientHeight;
       const delta = e.deltaY;
 
-      // Check if scroll is at boundaries
       if ((scrollTop <= 0 && delta < 0) || (scrollTop + height >= scrollHeight && delta > 0)) {
         return; 
       }
@@ -1058,41 +1374,40 @@ export default function VideoPlayer() {
     }
   };
 
-  // Add pause/resume functions
+  
   const handlePauseImmersion = () => {
     if (!isPaused) {
-      // Pause both timer and video
+      
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      // Store the elapsed time
       watchTimeRef.current = watchTime;
       setIsPaused(true);
-      // Pause the video
+      
       if (playerRef.current) {
         playerRef.current.pause();
       }
     } else {
-      // Resume both timer and video
+      
       startTimeRef.current = Date.now() - (watchTimeRef.current * 1000);
       timerRef.current = setInterval(() => {
         const elapsed = Math.floor((Date.now() - startTimeRef.current!) / 1000);
         setWatchTime(elapsed);
       }, 1000);
       setIsPaused(false);
-      // Play the video
+      
       if (playerRef.current) {
         playerRef.current.play();
       }
     }
   };
 
-  // Add manual submit function
+  
   const handleManualSubmit = async () => {
     if (startTimeRef.current !== null) {
       await saveImmersionTime();
-      // Reset all timers and states
+      
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -1102,14 +1417,14 @@ export default function VideoPlayer() {
       setVideoStartTime(null);
       setIsPaused(false);
 
-      // Pause the video
+      
       if (playerRef.current) {
         playerRef.current.pause();
       }
     }
   };
 
-  // Add functions for subtitle navigation
+  
   const findNextSubtitle = (currentTime: number) => {
     const adjustedCurrentTime = currentTime - (subtitleOffset / 1000);
     return subtitles.find(sub => sub.startTime > adjustedCurrentTime);
@@ -1133,7 +1448,7 @@ export default function VideoPlayer() {
     );
   };
 
-  // Add keyboard navigation
+  
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!playerRef.current || subtitles.length === 0) return;
@@ -1180,7 +1495,7 @@ export default function VideoPlayer() {
             }
           }
           break;
-        case ' ': // Space bar
+        case ' ': 
           e.preventDefault();
           e.stopPropagation(); 
           if (playerRef.current.paused()) {
@@ -1200,12 +1515,17 @@ export default function VideoPlayer() {
             newEnabled ? 'Auto-pause enabled' : 'Auto-pause disabled'
           );
           break;
+        case keyBindings.toggleTranscript:
+          e.preventDefault();
+          setIsFullscreenTranscriptVisible(!isFullscreenTranscriptVisible);
+          playerRef.current.el().classList.toggle('transcript-visible');
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown, true); 
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [subtitles, subtitleOffset, playerSettings?.settings?.keyBindings]);
+  }, [subtitles, subtitleOffset, playerSettings?.settings?.keyBindings, isFullscreenTranscriptVisible]);
 
   useEffect(() => {
     if (!playerRef.current || !playerSettings?.settings?.autoPause?.enabled) return;
@@ -1327,10 +1647,7 @@ export default function VideoPlayer() {
       
       playerRef.current.pause();
 
-      // Get the current time directly from the player
       const currentPlayerTime = playerRef.current.currentTime();
-
-      // Get the current subtitle
       const currentSub = subtitles.find(
         sub => 
           currentPlayerTime >= getAdjustedTime(sub.startTime) && 
@@ -1347,10 +1664,29 @@ export default function VideoPlayer() {
         return;
       }
 
-      // Capture screenshot
+      const cleanSubtitle = currentSub.text
+        .replace(/To view this video.*?video/g, '') 
+        .replace(/Loaded:?\s*\d*\.?\d*%?.*$/gi, '') 
+        .replace(/Loading\.{1,3}.*$/gi, '') 
+        .replace(/\b(Loaded|Loading)\b.*$/gi, '') 
+        .replace(/<[^>]*>/g, '') 
+        .replace(/\s+/g, ' ') 
+        .replace(/^\s*[.…]+\s*|\s*[.…]+\s*$/g, '') 
+        .replace(/.*?(Loaded:?\s*\d*\.?\d*%?)$/gi, '') 
+        .trim();
+
+      
+      if (!cleanSubtitle) {
+        console.warn('Subtitle was empty after cleaning:', currentSub.text);
+        setSelectedSubtitle(currentSub.text);
+      } else {
+        setSelectedSubtitle(cleanSubtitle);
+      }
+
+      
       const imageData = await mediaExtractor.captureVideoFrame(videoRef.current);
 
-      // Extract audio
+      
       const audioBlob = await mediaExtractor.extractAudioClip(
         videoRef.current,
         currentSub.startTime,
@@ -1358,7 +1694,6 @@ export default function VideoPlayer() {
       );
       setCapturedImage(imageData);
       setCapturedAudio(audioBlob);
-      setSelectedSubtitle(currentSub.text);
       setIsAnkiModalOpen(true);
     } catch (error) {
       console.error('Failed to mine sentence:', error);
@@ -1377,7 +1712,7 @@ export default function VideoPlayer() {
     setCapturedAudio(null);
     setSelectedSubtitle('');
     
-    // Resume video playback if it was playing before
+    
     if (playerRef.current && wasPlayingBeforeModal) {
       playerRef.current.play().catch((error: unknown) => {
         console.error('Failed to resume video:', error);
@@ -1386,7 +1721,7 @@ export default function VideoPlayer() {
     setWasPlayingBeforeModal(false);
   };
 
-  // Subtitle parsing functions
+  
   const parseSRT = (content: string) => {
     const subs: Array<{id: number, startTime: number, endTime: number, text: string}> = [];
     const blocks = content.trim().split(/\n\s*\n/);
@@ -1420,8 +1755,8 @@ export default function VideoPlayer() {
   };
 
   return (
-    <div className="grid grid-rows-[auto_1fr] gap-6 h-full">
-      <div className="flex items-center justify-between gap-4 px-6 py-3 bg-white dark:bg-gray-900 rounded-lg shadow-sm">
+    <div className="grid grid-rows-[auto_1fr] gap-4 h-full">
+      <div className="flex items-center justify-between gap-4 px-4 py-2 bg-white dark:bg-gray-900 rounded-lg shadow-sm">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-3">
             <Button
@@ -1467,16 +1802,27 @@ export default function VideoPlayer() {
 
           <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleMineSentence}
-            disabled={!videoSource || subtitles.length === 0}
-            className="hover:bg-[#F87171] hover:text-white transition-colors"
-          >
-            <Brain className="w-4 h-4 mr-2" />
-            Mine Sentence
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleMineSentence}
+              disabled={!videoSource || subtitles.length === 0}
+              className="hover:bg-[#F87171] hover:text-white transition-colors"
+            >
+              <Brain className="w-4 h-4 mr-2" />
+              Mine Sentence
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsAnkiSettingsOpen(true)}
+              className="hover:bg-[#F87171] hover:text-white transition-colors"
+            >
+              <Settings className="w-4 h-4 mr-2" />
+              Anki Settings
+            </Button>
+          </div>
 
           <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
 
@@ -1530,14 +1876,14 @@ export default function VideoPlayer() {
 
         {/* Right side controls */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-3 bg-gray-50 dark:bg-gray-800 rounded-lg px-3 py-1.5">
-            <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Offset:</span>
+          <div className="flex items-center gap-3 bg-slate-900 rounded-lg px-3 py-1.5 border border-slate-700 hover:border-[#F87171] transition-colors">
+            <span className="text-sm font-medium text-white">Offset:</span>
             <input
               type="number"
               value={customOffset}
               onChange={handleCustomOffsetChange}
               placeholder="ms"
-              className="w-16 bg-transparent text-sm focus:outline-none focus:ring-0 text-right"
+              className="w-16 bg-transparent text-sm focus:outline-none focus:ring-0 text-right text-white"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   handleCustomOffsetApply();
@@ -1554,7 +1900,7 @@ export default function VideoPlayer() {
             </Button>
           </div>
 
-          <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
+          <div className="h-4 w-px bg-slate-700" />
 
           <div className="flex items-center gap-3">
             <PlayerSettings />
@@ -1577,13 +1923,13 @@ export default function VideoPlayer() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent 
-                className="w-72 max-h-[80vh] overflow-y-auto" 
+                className="w-72 max-h-[80vh] overflow-y-auto bg-slate-900 border border-[#F87171]" 
                 align="end" 
-                side="left"
+                side="bottom"
                 sideOffset={8}
               >
-                <div className="sticky top-0 bg-white dark:bg-gray-900 border-b z-10">
-                  <DropdownMenuLabel className="flex items-center gap-2">
+                <div className="sticky top-0 bg-slate-900 border-b border-slate-700 z-10">
+                  <DropdownMenuLabel className="flex items-center gap-2 text-white">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
                       <line x1="9" y1="9" x2="19" y2="9"></line>
@@ -1598,10 +1944,10 @@ export default function VideoPlayer() {
                 {/* Auto-Pause Settings */}
                 <div className="p-2 space-y-3">
                   <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Auto-Pause</Label>
+                    <Label className="text-sm font-medium text-white">Auto-Pause</Label>
                     <div 
                       className={`w-9 h-5 rounded-full p-0.5 cursor-pointer transition-colors ${
-                        playerSettings?.settings?.autoPause?.enabled ? 'bg-[#F87171]' : 'bg-gray-200 dark:bg-gray-700'
+                        playerSettings?.settings?.autoPause?.enabled ? 'bg-[#F87171]' : 'bg-slate-700'
                       }`}
                       onClick={() => playerSettings.setAutoPause({ 
                         enabled: !playerSettings?.settings?.autoPause?.enabled 
@@ -1617,13 +1963,13 @@ export default function VideoPlayer() {
 
                   {playerSettings?.settings?.autoPause?.enabled && (
                     <div>
-                      <Label className="text-sm font-medium block mb-1">Pause At</Label>
+                      <Label className="text-sm font-medium block mb-1 text-white">Pause At</Label>
                       <select
                         value={playerSettings?.settings?.autoPause?.pauseAt ?? 'start'}
                         onChange={(e) => playerSettings.setAutoPause({ 
                           pauseAt: e.target.value as 'start' | 'end' 
                         })}
-                        className="w-full px-2 py-1 text-sm border rounded-md bg-transparent hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
+                        className="w-full px-2 py-1 text-sm border rounded-md bg-slate-900 text-white border-slate-700 hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
                       >
                         <option value="start">Start of Subtitle</option>
                         <option value="end">End of Subtitle</option>
@@ -1632,19 +1978,19 @@ export default function VideoPlayer() {
                   )}
                 </div>
 
-                <DropdownMenuSeparator />
+                <DropdownMenuSeparator className="bg-[#2a3142]" />
 
                 {/* Font Settings Group */}
                 <div className="p-2 space-y-3">
-                  <Label className="text-xs font-medium text-gray-500 dark:text-gray-400">Font Settings</Label>
+                  <Label className="text-xs font-medium text-gray-400">Font Settings</Label>
                   
                   {/* Font Family */}
                   <div>
-                    <Label className="text-sm font-medium block mb-1">Font Family</Label>
+                    <Label className="text-sm font-medium block mb-1 text-white">Font Family</Label>
                     <select
                       value={subtitleFontFamily}
                       onChange={(e) => setSubtitleFontFamily(e.target.value)}
-                      className="w-full px-2 py-1 text-sm border rounded-md bg-transparent hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
+                      className="w-full px-2 py-1 text-sm border rounded-md bg-slate-900 text-white border-slate-700 hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
                     >
                       {FONT_OPTIONS.map((font) => (
                         <option key={font.value} value={font.value}>
@@ -1656,27 +2002,24 @@ export default function VideoPlayer() {
 
                   {/* Font Weight */}
                   <div>
-                    <Label className="text-sm font-medium block mb-1">Font Weight</Label>
-                    <select
-                      value={subtitleFontWeight}
-                      onChange={(e) => setSubtitleFontWeight(e.target.value)}
-                      className="w-full px-2 py-1 text-sm border rounded-md bg-transparent hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
-                    >
-                      {FONT_WEIGHT_OPTIONS.map((weight) => (
-                        <option key={weight.value} value={weight.value}>
-                          {weight.label}
-                        </option>
-                      ))}
-                    </select>
+                    <Label className="text-sm font-medium block mb-1 text-white">Font Weight: {subtitleFontWeight}</Label>
+                    <Slider
+                      value={[parseInt(subtitleFontWeight)]}
+                      onValueChange={(values: number[]) => setSubtitleFontWeight(values[0].toString())}
+                      min={100}
+                      max={900}
+                      step={100}
+                      className="my-1 [&_[role=slider]]:bg-[#F87171] [&_[role=slider]]:border-[#F87171] [&_[role=slider]]:hover:bg-[#F87171]/90 [&_[role=slider]]:focus:ring-[#F87171]/30 [&_[role=track]]:bg-[#F87171]"
+                    />
                   </div>
 
                   {/* Font Style */}
                   <div>
-                    <Label className="text-sm font-medium block mb-1">Font Style</Label>
+                    <Label className="text-sm font-medium block mb-1 text-white">Font Style</Label>
                     <select
                       value={subtitleFontStyle}
                       onChange={(e) => setSubtitleFontStyle(e.target.value)}
-                      className="w-full px-2 py-1 text-sm border rounded-md bg-transparent hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
+                      className="w-full px-2 py-1 text-sm border rounded-md bg-slate-900 text-white border-slate-700 hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
                     >
                       {FONT_STYLE_OPTIONS.map((style) => (
                         <option key={style.value} value={style.value}>
@@ -1688,103 +2031,121 @@ export default function VideoPlayer() {
 
                   {/* Letter Spacing */}
                   <div>
-                    <Label className="text-sm font-medium block mb-1">Letter Spacing: {subtitleLetterSpacing}em</Label>
+                    <Label className="text-sm font-medium block mb-1 text-white">Letter Spacing: {subtitleLetterSpacing}em</Label>
                     <Slider
                       value={[subtitleLetterSpacing]}
                       onValueChange={(values: number[]) => setSubtitleLetterSpacing(values[0])}
                       min={-0.5}
                       max={1}
                       step={0.1}
-                      className="my-1"
+                      className="my-1 [&_[role=slider]]:bg-[#F87171] [&_[role=slider]]:border-[#F87171] [&_[role=slider]]:hover:bg-[#F87171]/90 [&_[role=slider]]:focus:ring-[#F87171]/30 [&_[role=track]]:bg-[#F87171]"
                     />
                   </div>
                 </div>
 
-                <DropdownMenuSeparator />
+                <DropdownMenuSeparator className="bg-[#2a3142]" />
                 <div className="p-2 space-y-3">
-                  <Label className="text-xs font-medium text-gray-500 dark:text-gray-400">Appearance</Label>
+                  <Label className="text-xs font-medium text-gray-400">Appearance</Label>
 
                   {/* Font Size */}
                   <div>
-                    <Label className="text-sm font-medium block mb-1">Font Size: {subtitleFontSize}px</Label>
-                    <Slider
-                      value={[subtitleFontSize]}
-                      onValueChange={(values: number[]) => setSubtitleFontSize(values[0])}
-                      min={12}
-                      max={48}
-                      step={1}
-                      className="my-1"
+                    <Label className="text-sm font-medium block mb-1 text-white">Font Size: {subtitleFontSize}px</Label>
+                    <input
+                      type="text"
+                      value={subtitleFontSize}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') {
+                          setSubtitleFontSize(0);
+                        } else {
+                          const newSize = parseInt(value);
+                          if (!isNaN(newSize)) {
+                            setSubtitleFontSize(newSize);
+                          }
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || isNaN(parseInt(value))) {
+                          setSubtitleFontSize(22); 
+                        }
+                      }}
+                      className="w-full px-2 py-1 text-sm border rounded-md bg-[#1a1f2e] text-white border-[#2a3142] hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
                     />
                   </div>
 
                   {/* Position */}
                   <div>
-                    <Label className="text-sm font-medium block mb-1">Position: {subtitlePosition}%</Label>
-                    <Slider
-                      value={[subtitlePosition]}
-                      onValueChange={(values: number[]) => {
-                        setSubtitlePosition(values[0]);
-                        if (playerRef.current) {
-                          const track = playerRef.current.textTracks()[0];
-                          if (track && track.cues) {
-                            for (let i = 0; i < track.cues.length; i++) {
-                              track.cues[i].line = values[0];
-                            }
+                    <Label className="text-sm font-medium block mb-1 text-white">Position (px from top)</Label>
+                    <input
+                      type="text"
+                      value={subtitlePosition}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') {
+                          setSubtitlePosition(0);
+                        } else {
+                          const newPosition = parseInt(value);
+                          if (!isNaN(newPosition)) {
+                            setSubtitlePosition(newPosition);
                           }
                         }
                       }}
-                      min={0}
-                      max={100}
-                      step={1}
-                      className="my-1"
+                      onBlur={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || isNaN(parseInt(value))) {
+                          setSubtitlePosition(0);
+                        }
+                      }}
+                      className="w-full px-2 py-1 text-sm border rounded-md bg-[#1a1f2e] text-white border-[#2a3142] hover:border-[#F87171] focus:outline-none focus:ring-1 focus:ring-[#F87171] focus:border-transparent transition-colors"
                     />
                   </div>
 
                   {/* Colors */}
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <Label className="text-sm font-medium block mb-1">Text Color</Label>
+                      <Label className="text-sm font-medium block mb-1 text-white">Text Color</Label>
                       <input
                         type="color"
                         value={subtitleColor}
                         onChange={(e) => setSubtitleColor(e.target.value)}
-                        className="w-full h-8 rounded cursor-pointer"
+                        className="w-full h-8 rounded cursor-pointer border border-[#2a3142] hover:border-[#F87171] transition-colors"
                       />
                     </div>
 
                     <div>
-                      <Label className="text-sm font-medium block mb-1">Outline Color</Label>
+                      <Label className="text-sm font-medium block mb-1 text-white">Outline Color</Label>
                       <input
                         type="color"
                         value={subtitleStrokeColor}
                         onChange={(e) => setSubtitleStrokeColor(e.target.value)}
-                        className="w-full h-8 rounded cursor-pointer"
+                        className="w-full h-8 rounded cursor-pointer border border-[#2a3142] hover:border-[#F87171] transition-colors"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <Label className="text-sm font-medium block mb-1">Outline Width: {subtitleStrokeWidth}px</Label>
+                    <Label className="text-sm font-medium block mb-1 text-white">Outline Width: {subtitleStrokeWidth}px</Label>
                     <Slider
                       value={[subtitleStrokeWidth]}
                       onValueChange={(values: number[]) => setSubtitleStrokeWidth(values[0])}
                       min={0}
-                      max={4}
-                      step={0.5}
-                      className="my-1"
+                      max={10}
+                      step={0.1}
+                      className="my-1 [&_[role=slider]]:bg-[#F87171] [&_[role=slider]]:border-[#F87171] [&_[role=slider]]:hover:bg-[#F87171]/90 [&_[role=slider]]:focus:ring-[#F87171]/30 [&_[role=track]]:bg-[#F87171]"
                     />
                   </div>
                 </div>
 
-                <DropdownMenuSeparator />
+                <DropdownMenuSeparator className="bg-[#2a3142]" />
                 <div className="p-2">
-                  <Label className="text-xs font-medium text-gray-500 dark:text-gray-400">Behavior</Label>
+                  <Label className="text-xs font-medium text-gray-400">Behavior</Label>
                   
                   <div className="flex items-center justify-between mt-2">
-                    <Label className="text-sm font-medium">Pause on Hover</Label>
+                    <Label className="text-sm font-medium text-white">Pause on Hover</Label>
                     <div 
                       className={`w-9 h-5 rounded-full p-0.5 cursor-pointer transition-colors ${
-                        hoverPause ? 'bg-[#F87171]' : 'bg-gray-200 dark:bg-gray-700'
+                        hoverPause ? 'bg-[#F87171]' : 'bg-slate-700'
                       }`}
                       onClick={() => {
                         setHoverPause(!hoverPause);
@@ -1806,11 +2167,11 @@ export default function VideoPlayer() {
       </div>
 
       {/* Video and transcript container */}
-      <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[4fr_1fr] gap-4 flex-1 min-h-0">
         {/* Video player container */}
-        <div className="w-full h-full">
+        <div className="relative w-full h-full rounded-lg overflow-hidden">
           <div 
-            className="relative w-full h-full rounded-lg overflow-hidden shadow-lg group"
+            className="absolute inset-0 rounded-lg overflow-hidden shadow-lg group"
             onDragEnter={(e) => handleDrag(e, true, setIsDraggingVideo)}
             onDragOver={(e) => {
               e.preventDefault();
@@ -1862,20 +2223,62 @@ export default function VideoPlayer() {
                 </div>
               </div>
             )}
+            {/* Add fullscreen transcript panel */}
+            <div className={`fullscreen-transcript ${isFullscreenTranscriptVisible ? 'visible' : ''}`}>
+              <div className="fullscreen-transcript-content" ref={fullscreenTranscriptRef}>
+                {subtitles.map((subtitle) => (
+                  <div
+                    key={subtitle.id}
+                    id={`subtitle-fullscreen-${subtitle.id}`}
+                    className={`py-2 px-3 rounded-md transition-all hover:bg-gray-800/50 cursor-pointer ${
+                      currentSubtitleId === subtitle.id
+                        ? 'bg-red-900/30 border-l-4 border-[#F87171]'
+                        : ''
+                    }`}
+                    onClick={() => handleSubtitleClick(getAdjustedTime(subtitle.startTime))}
+                  >
+                    <div className="text-xs text-gray-400 mb-1">
+                      {`${formatTime(getAdjustedTime(subtitle.startTime))} → ${formatTime(getAdjustedTime(subtitle.endTime))}`}
+                    </div>
+                    <div className="text-sm hover:text-[#F87171] transition-colors">
+                      {subtitle.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Transcript */}
-        <div className="w-full h-[300px] lg:h-full bg-white dark:bg-gray-900 rounded-[30px] shadow-lg relative group overflow-hidden">
+        <div 
+          className="w-full h-[300px] lg:h-full bg-white dark:bg-gray-900 rounded-[30px] shadow-lg relative group overflow-hidden"
+          onDragEnter={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleDrag(e, true, setIsDraggingSubs);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleDrag(e, true, setIsDraggingSubs);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (e.currentTarget === e.target) {
+              handleDrag(e, false, setIsDraggingSubs);
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleDrop(e, 'subtitle');
+          }}
+        >
           <div 
             className="absolute inset-0 overflow-y-auto px-4 py-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-track]:transparent [&::-webkit-scrollbar-thumb]:transparent hover:[&::-webkit-scrollbar-thumb]:bg-black/10"
-            onDragEnter={(e) => handleDrag(e, true, setIsDraggingSubs)}
-            onDragOver={(e) => {
-              e.preventDefault();
-              handleDrag(e, true, setIsDraggingSubs);
-            }}
-            onDragLeave={(e) => handleDrag(e, false, setIsDraggingSubs)}
-            onDrop={(e) => handleDrop(e, 'subtitle')}
             ref={transcriptRef}
           >
             {isDraggingSubs && (
@@ -1932,11 +2335,15 @@ export default function VideoPlayer() {
           isOpen={isAnkiModalOpen}
           onClose={handleAnkiModalClose}
           subtitle={selectedSubtitle}
-          imageData={capturedImage}
-          audioBlob={capturedAudio}
+          imageData={capturedImage as string}
+          audioBlob={capturedAudio as Blob}
           currentTime={playerRef.current?.currentTime() || 0}
         />
       )}
+      <AnkiSettingsModal 
+        isOpen={isAnkiSettingsOpen}
+        onClose={() => setIsAnkiSettingsOpen(false)}
+      />
     </div>
   );
 
@@ -1945,8 +2352,7 @@ export default function VideoPlayer() {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    const ms = Math.floor((seconds % 1) * 1000);
-    return `${pad(hours)}:${pad(minutes)}:${pad(secs)}.${ms.toString().padStart(3, '0')}`;
+    return `${pad(hours)}:${pad(minutes)}:${pad(secs)}`;
   }
 
   function formatDuration(seconds: number): string {
@@ -1959,4 +2365,23 @@ export default function VideoPlayer() {
     }
     return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
+
+  
+  useEffect(() => {
+    if (!playerRef.current) return;
+
+    const handleFullscreenChange = () => {
+      if (!playerRef.current.isFullscreen()) {
+        setIsFullscreenTranscriptVisible(false);
+        playerRef.current.el().classList.remove('transcript-visible');
+      }
+    };
+
+    playerRef.current.on('fullscreenchange', handleFullscreenChange);
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.off('fullscreenchange', handleFullscreenChange);
+      }
+    };
+  }, []);
 } 

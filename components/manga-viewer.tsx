@@ -96,13 +96,11 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
   const touchStartXRef = useRef(0);
   const touchStartYRef = useRef(0);
 
-  // Add zoom state and handlers
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  // Add immersion timer state and refs
   const [watchTime, setWatchTime] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const startTimeRef = useRef<number | null>(null);
@@ -110,6 +108,7 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
 
   const [isContainerFullscreen, setIsContainerFullscreen] = useState(false);
   const viewerContainerRef = useRef<HTMLDivElement>(null);
+  const [isClosing, setIsClosing] = useState(false);
 
   useEffect(() => {
     const loadSavedPage = () => {
@@ -126,8 +125,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
     };
     loadSavedPage();
   }, [mokuroData, entryId]);
-
-  // Add immersion timer functions
   const saveImmersionTime = async () => {
     if (startTimeRef.current === null) return;
     
@@ -140,12 +137,14 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
         now.toISOString()
       );
 
-      if (result.error) {
+      if (result?.error) {
         if (result.error.message?.includes('auth')) {
           toast.error('Please sign in to track your reading progress');
         } else {
           toast.error('Failed to save reading progress');
         }
+      } else if (!result) {
+        toast.error('Failed to save reading progress');
       } else {
         toast.success('Reading progress saved');
       }
@@ -156,74 +155,67 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
   };
 
   const handleClose = useCallback(async () => {
-    // Save immersion time first
-    if (startTimeRef.current !== null) {
-      try {
-        await saveImmersionTime();
-      } catch (error) {
-        console.error('Failed to save immersion time on close:', error);
+    setIsClosing(true);
+    setTimeout(async () => {
+      if (startTimeRef.current !== null) {
+        try {
+          await saveImmersionTime();
+        } catch (error) {
+          console.error('Failed to save immersion time on close:', error);
+        }
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        startTimeRef.current = null;
+        setWatchTime(0);
+        setIsPaused(false);
       }
-      // Cleanup timers
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      startTimeRef.current = null;
-      setWatchTime(0);
-      setIsPaused(false);
-    }
 
-    // Then save progress
-    if (mokuroData?.pages && currentPage > 0) {
-      try {
-        // Save to localStorage
-        window.localStorage.setItem(`manga-progress-${entryId}`, currentPage.toString());
-        
-        // Calculate progress - adjust for single/double page view
-        const totalPages = mokuroData.pages.length;
-        const progress = Math.min(Math.round((currentPage / totalPages) * 100), 100);
-        
-        // Update IndexedDB first
-        await new Promise<void>((resolve, reject) => {
-          const request = window.indexedDB.open('MangaLibraryDB');
-          request.onerror = () => reject(request.error);
-          request.onsuccess = () => {
-            const db = request.result;
-            const tx = db.transaction(['manga'], 'readwrite');
-            const store = tx.objectStore('manga');
-            const getRequest = store.get(entryId);
-            
-            getRequest.onsuccess = () => {
-              const entry = getRequest.result;
-              if (entry) {
-                entry.progress = progress;
-                entry.lastRead = Date.now();
-                const putRequest = store.put(entry);
-                putRequest.onsuccess = () => resolve();
-                putRequest.onerror = () => reject(putRequest.error);
-              } else {
-                resolve();
-              }
+      if (mokuroData?.pages && currentPage > 0) {
+        try {
+          window.localStorage.setItem(`manga-progress-${entryId}`, currentPage.toString());
+          
+          const totalPages = mokuroData.pages.length;
+          const progress = Math.min(Math.round((currentPage / totalPages) * 100), 100);
+          await new Promise<void>((resolve, reject) => {
+            const request = window.indexedDB.open('MangaLibraryDB');
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+              const db = request.result;
+              const tx = db.transaction(['manga'], 'readwrite');
+              const store = tx.objectStore('manga');
+              const getRequest = store.get(entryId);
+              
+              getRequest.onsuccess = () => {
+                const entry = getRequest.result;
+                if (entry) {
+                  entry.progress = progress;
+                  entry.lastRead = Date.now();
+                  const putRequest = store.put(entry);
+                  putRequest.onsuccess = () => resolve();
+                  putRequest.onerror = () => reject(putRequest.error);
+                } else {
+                  resolve();
+                }
+              };
+              getRequest.onerror = () => reject(getRequest.error);
             };
-            getRequest.onerror = () => reject(getRequest.error);
-          };
-        });
-        
-        onProgressUpdate(progress);
-      } catch (error) {
-        console.error('Error saving progress:', error);
+          });
+          
+          onProgressUpdate(progress);
+        } catch (error) {
+          console.error('Error saving progress:', error);
+        }
       }
-    }
-    // Finally close the viewer
-    onClose();
-  }, [currentPage, mokuroData, entryId, onProgressUpdate, onClose]);
+      onClose();
+    }, 300); // Match the duration of the exit animation
+  }, [currentPage, mokuroData, entryId, onProgressUpdate, onClose, saveImmersionTime]);
 
-  // Remove the progress update from the page change effect
   useEffect(() => {
     const savePage = () => {
       if (mokuroData?.pages && currentPage > 0) {
         try {
-          // Only save current page to localStorage
           window.localStorage.setItem(`manga-progress-${entryId}`, currentPage.toString());
         } catch (error) {
           console.error('Error saving page:', error);
@@ -232,8 +224,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
     };
     savePage();
   }, [currentPage, mokuroData, entryId]);
-
-  // Add container fullscreen toggle
   const toggleContainerFullscreen = () => {
     if (!viewerContainerRef.current) return;
     
@@ -247,8 +237,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
       }
     }
   };
-
-  // Listen for fullscreen changes
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsContainerFullscreen(document.fullscreenElement === viewerContainerRef.current);
@@ -282,14 +270,8 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
         }
       });
 
-      // Create pages based on the images
       const processedPages = images.map((image: File, index: number) => {
-        console.log(`Processing page ${index} with image:`, image.name);
-        
-        // Try to find matching mokuro data
         const mokuroPage = mokuroData.pages[index] || {};
-        console.log(`Mokuro data for page ${index}:`, mokuroPage);
-
         const blocks = mokuroPage.blocks || [];
         const processedBlocks = blocks.map((block: any) => ({
           text: block.text || '',
@@ -321,7 +303,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
     }
   }, [mokuroData, images]);
 
-  // Cleanup object URLs when component unmounts
   useEffect(() => {
     return () => {
       pages.forEach(page => {
@@ -341,7 +322,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
   }, [currentPage, pages.length, settings.singlePageView]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    // Prevent default behavior for navigation keys
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' ', 'Home', 'End'].includes(event.key)) {
       event.preventDefault();
     }
@@ -489,8 +469,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
       setIsPaused(false);
     }
   };
-
-  // Start timer when component mounts
   useEffect(() => {
     const now = Date.now();
     startTimeRef.current = now;
@@ -498,8 +476,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
       const elapsed = Math.floor((Date.now() - startTimeRef.current!) / 1000);
       setWatchTime(elapsed);
     }, 1000);
-
-    // Just cleanup timers on unmount
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -507,11 +483,9 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
     };
   }, []);
 
-  // Add cleanup on close
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (startTimeRef.current !== null) {
-        // Use synchronous localStorage as a backup in case the async save fails
         try {
           const now = new Date();
           const startDate = new Date(startTimeRef.current);
@@ -540,8 +514,6 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [watchTime]);
-
-  // Helper function to format duration
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -578,12 +550,67 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
   return (
     <div 
       ref={viewerContainerRef}
-      className={`flex flex-col bg-background relative ${
-        isContainerFullscreen ? 'fixed inset-0 z-50' : 'h-[90vh] w-full rounded-xl border-8 border-[#F87171]'
+      className={`flex flex-col bg-background fixed inset-0 transition-all duration-1000 ease-in-out z-50 transform-gpu ${
+        isContainerFullscreen 
+          ? '' 
+          : 'h-[95vh] max-w-[95vw] w-[95vw] m-auto inset-0 rounded-xl border-8 border-[#F87171] overflow-hidden'
       }`}
+      style={{
+        animation: isClosing 
+          ? 'viewer-close 500ms ease-in-out forwards'
+          : 'viewer-open 1000ms ease-in-out forwards'
+      }}
     >
-      <style>{textBlockStyles}</style>
-      <div className="flex justify-between items-center p-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <style>{`
+        ${textBlockStyles}
+        @keyframes viewer-open {
+          0% {
+            opacity: 0;
+            transform: scale(0.95) translateY(2rem);
+          }
+          100% {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+        }
+        @keyframes viewer-close {
+          0% {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+          100% {
+            opacity: 0;
+            transform: scale(0.95) translateY(2rem);
+          }
+        }
+        @keyframes header-open {
+          0% {
+            opacity: 0;
+            transform: translateY(-2rem);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes header-close {
+          0% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          100% {
+            opacity: 0;
+            transform: translateY(-2rem);
+          }
+        }
+      `}</style>
+      <div className={`flex justify-between items-center p-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-all duration-1000 ease-in-out transform-gpu`}
+      style={{
+        animation: isClosing 
+          ? 'header-close 500ms ease-in-out forwards'
+          : 'header-open 1000ms ease-in-out forwards'
+      }}
+      >
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -756,7 +783,11 @@ export function MangaViewer({ mokuroData, images, onClose, entryId, onProgressUp
 
       <div
         ref={containerRef}
-        className="relative flex-1 overflow-hidden bg-black"
+        className={`relative flex-1 overflow-hidden bg-black ${
+          isClosing 
+            ? 'animate-out zoom-out-95 duration-500' 
+            : 'animate-in zoom-in-95 duration-1000 delay-300'
+        }`}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

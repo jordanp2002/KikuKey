@@ -75,29 +75,22 @@ export default function AnkiCardModal({
     try {
       const anki = new AnkiConnect({ url: ankiSettings.settings.ankiConnectUrl });
       
-      // Get field mappings for the selected model
       const fieldMappings = ankiSettings.getFieldMapping(selectedModel);
       
-      // Get all required fields for the note type
       const modelFields = await anki.getModelFieldNames(selectedModel);
 
-      // Check which media files we need
       const needsAudio = Object.entries(fieldMappings).some(([appField, noteTypeField]) => 
         appField === APP_FIELDS.AUDIO && noteTypeField
       );
       const needsImage = Object.entries(fieldMappings).some(([appField, noteTypeField]) => 
         appField === APP_FIELDS.IMAGE && noteTypeField
       );
-
-      // Generate filenames and convert media only if needed
       const audioFilename = needsAudio ? mediaExtractor.generateUniqueFilename('audio', 'mp3') : '';
       const imageFilename = needsImage ? mediaExtractor.generateUniqueFilename('image', 'jpg') : '';
       
-      // Create fields object based on mappings
       const fields: Record<string, string> = {};
       let hasAnyMapping = false;
       
-      // Map each app field to the corresponding note type field
       Object.entries(fieldMappings).forEach(([appField, noteTypeField]) => {
         if (!noteTypeField) return;
         hasAnyMapping = true;
@@ -124,15 +117,8 @@ export default function AnkiCardModal({
         return;
       }
 
-      // Initialize unmapped required fields with empty strings
-      modelFields.forEach(field => {
-        if (!Object.values(fieldMappings).includes(field)) {
-          fields[field] = '';
-        }
-      });
-
+      // Store media files first
       try {
-        // Store media files first (only if they are mapped)
         const mediaPromises: Promise<void>[] = [];
         
         if (needsAudio) {
@@ -156,36 +142,45 @@ export default function AnkiCardModal({
       }
 
       try {
-        // Check if we can add the note
-        const canAdd = await anki.canAddNotes([{
-          deckName: selectedDeck,
-          modelName: selectedModel,
-          fields,
-          tags: tags.length > 0 ? [...tags] : []
-        }]);
+        // Find the most recent note in the selected deck
+        const recentNote = await anki.findMostRecentNote(selectedDeck);
+        
+        if (!recentNote) {
+          // If no recent note found, create a new one
+          const canAdd = await anki.canAddNotes([{
+            deckName: selectedDeck,
+            modelName: selectedModel,
+            fields,
+            tags: tags.length > 0 ? [...tags] : []
+          }]);
 
-        if (!canAdd[0]) {
-          toast.error('Cannot add note: It might be a duplicate or missing required fields');
-          setIsSubmitting(false);
-          return;
+          if (!canAdd[0]) {
+            toast.error('Cannot add note: It might be a duplicate or missing required fields');
+            setIsSubmitting(false);
+            return;
+          }
+
+          await anki.addNote({
+            deckName: selectedDeck,
+            modelName: selectedModel,
+            fields,
+            tags: tags.length > 0 ? [...tags] : []
+          });
+          
+          toast.success('New card added successfully');
+        } else {
+          // Update the existing note
+          await anki.updateNoteFields(recentNote.noteId, fields);
+          toast.success('Updated most recent card successfully');
         }
 
-        // Add note
-        await anki.addNote({
-          deckName: selectedDeck,
-          modelName: selectedModel,
-          fields,
-          tags: tags.length > 0 ? [...tags] : []
-        });
-
-        toast.success('Card added successfully');
         onClose();
       } catch (noteError) {
-        console.error('Failed to add note:', noteError);
+        console.error('Failed to update/add note:', noteError);
         if (noteError instanceof Error) {
-          toast.error(`Failed to add card: ${noteError.message}`);
+          toast.error(`Failed to update/add card: ${noteError.message}`);
         } else {
-          toast.error('Failed to add card to Anki');
+          toast.error('Failed to update/add card to Anki');
         }
       }
     } catch (error) {
@@ -202,54 +197,67 @@ export default function AnkiCardModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl bg-slate-900 border border-[#F87171]">
         <DialogHeader>
-          <DialogTitle>Create Anki Card</DialogTitle>
+          <DialogTitle className="text-white">Create Anki Card</DialogTitle>
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label>Deck</Label>
+            <Label className="text-white">Deck</Label>
             <Select value={selectedDeck} onValueChange={setSelectedDeck}>
-              <SelectTrigger>
+              <SelectTrigger className="bg-slate-900 text-white border-slate-700 hover:border-[#F87171] focus:ring-[#F87171]">
                 <SelectValue placeholder="Select a deck" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-slate-900 border border-slate-700">
                 {decks.map((deck) => (
-                  <SelectItem key={deck} value={deck}>{deck}</SelectItem>
+                  <SelectItem 
+                    key={deck} 
+                    value={deck}
+                    className="text-white hover:bg-[#F87171] focus:bg-[#F87171] focus:text-white"
+                  >
+                    {deck}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
           <div className="grid gap-2">
-            <Label>Note Type</Label>
+            <Label className="text-white">Note Type</Label>
             <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger>
+              <SelectTrigger className="bg-slate-900 text-white border-slate-700 hover:border-[#F87171] focus:ring-[#F87171]">
                 <SelectValue placeholder="Select a note type" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-slate-900 border border-slate-700">
                 {models.map((model) => (
-                  <SelectItem key={model} value={model}>{model}</SelectItem>
+                  <SelectItem 
+                    key={model} 
+                    value={model}
+                    className="text-white hover:bg-[#F87171] focus:bg-[#F87171] focus:text-white"
+                  >
+                    {model}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
           <div className="grid gap-2">
-            <Label>Tags</Label>
+            <Label className="text-white">Tags</Label>
             <Input
               value={tags.join(' ')}
               onChange={(e) => setTags(e.target.value.split(/\s+/).filter(Boolean))}
               placeholder="Enter tags separated by spaces"
+              className="bg-slate-900 text-white border-slate-700 hover:border-[#F87171] focus:ring-[#F87171] placeholder:text-gray-500"
             />
           </div>
 
           <div className="grid gap-2">
-            <Label>Preview</Label>
-            <div className="p-4 border rounded-lg">
-              <p className="mb-2">{subtitle}</p>
-              <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden mb-2">
+            <Label className="text-white">Preview</Label>
+            <div className="p-4 border border-slate-700 rounded-lg bg-slate-900">
+              <p className="mb-2 text-white">{subtitle}</p>
+              <div className="aspect-video bg-slate-800 rounded-lg overflow-hidden mb-2">
                 <img src={imageData} alt="Screenshot" className="w-full h-full object-contain" />
               </div>
               {audioBlob && (
@@ -262,8 +270,18 @@ export default function AnkiCardModal({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleSubmit} disabled={isSubmitting}>
+          <Button 
+            variant="outline" 
+            onClick={onClose}
+            className="border-slate-700 text-white hover:bg-slate-800 hover:text-white"
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSubmit} 
+            disabled={isSubmitting}
+            className="bg-[#F87171] text-white hover:bg-[#F87171]/90 border-none"
+          >
             {isSubmitting ? 'Adding...' : 'Add to Anki'}
           </Button>
         </DialogFooter>
